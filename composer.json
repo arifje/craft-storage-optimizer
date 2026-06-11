@@ -1,0 +1,27 @@
+{
+  "name": "arifje/craft-gif-to-webp",
+  "description": "Convert Craft CMS GIF assets to animated WebP using gif2webp.",
+  "type": "craft-plugin",
+  "license": "MIT",
+  "authors": [
+    {
+      "name": "Arjan Brinkman"
+    }
+  ],
+  "require": {
+    "php": ">=8.0.2",
+    "craftcms/cms": "^4.4 || ^5.0"
+  },
+  "autoload": {
+    "psr-4": {
+      "arifje\\giftowebp\\": "src/"
+    }
+  },
+  "extra": {
+    "handle": "gif-to-webp",
+    "name": "GIF to WebP",
+    "class": "arifje\\giftowebp\\GifToWebp",
+    "schemaVersion": "1.0.0",
+    "version": "1.0.0"
+  }
+}

@@ -1,0 +1,63 @@
+{% import "_includes/forms" as forms %}
+
+{{ forms.lightswitchField({
+    first: true,
+    label: "Convert GIFs on asset save"|t('gif-to-webp'),
+    instructions: "When enabled, saving a GIF asset enqueues a WebP conversion job."|t('gif-to-webp'),
+    id: 'convertOnAssetSave',
+    name: 'convertOnAssetSave',
+    on: settings.convertOnAssetSave,
+    errors: settings.getErrors('convertOnAssetSave')
+}) }}
+
+{{ forms.textField({
+    label: "Queue delay"|t('gif-to-webp'),
+    instructions: "Seconds to delay conversion jobs. Defaults to 300 so GIF-to-MP4 processing can run first."|t('gif-to-webp'),
+    id: 'queueDelay',
+    name: 'queueDelay',
+    type: 'number',
+    min: 0,
+    value: settings.queueDelay,
+    errors: settings.getErrors('queueDelay')
+}) }}
+
+{{ forms.autosuggestField({
+    label: "gif2webp path"|t('gif-to-webp'),
+    instructions: "Binary path or environment variable used to run libwebp's gif2webp command."|t('gif-to-webp'),
+    id: 'gif2webpPath',
+    name: 'gif2webpPath',
+    suggestEnvVars: true,
+    value: settings.gif2webpPath,
+    errors: settings.getErrors('gif2webpPath')
+}) }}
+
+{{ forms.textField({
+    label: "Quality"|t('gif-to-webp'),
+    id: 'quality',
+    name: 'quality',
+    type: 'number',
+    min: 0,
+    max: 100,
+    value: settings.quality,
+    errors: settings.getErrors('quality')
+}) }}
+
+{{ forms.textField({
+    label: "Method"|t('gif-to-webp'),
+    instructions: "gif2webp compression method from 0 to 6."|t('gif-to-webp'),
+    id: 'method',
+    name: 'method',
+    type: 'number',
+    min: 0,
+    max: 6,
+    value: settings.method,
+    errors: settings.getErrors('method')
+}) }}
+
+{{ forms.lightswitchField({
+    label: "Use gif2webp multithreading"|t('gif-to-webp'),
+    id: 'multiThreaded',
+    name: 'multiThreaded',
+    on: settings.multiThreaded,
+    errors: settings.getErrors('multiThreaded')
+}) }}

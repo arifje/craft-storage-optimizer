@@ -1,0 +1,786 @@
+<?php
+
+namespace arifje\giftowebp\services;
+
+use arifje\giftowebp\GifToWebp;
+use arifje\giftowebp\jobs\ConvertGifJob;
+use arifje\giftowebp\models\Settings;
+use Craft;
+use craft\base\Component;
+use craft\elements\Asset;
+use craft\helpers\App;
+use craft\helpers\ElementHelper;
+use craft\helpers\FileHelper;
+use yii\db\Expression;
+use yii\db\IntegrityException;
+use yii\db\Query;
+
+class Conversions extends Component
+{
+    public const TABLE = '{{%gif_to_webp_conversions}}';
+
+    public const STATUS_PENDING = 'pending';
+    public const STATUS_QUEUED = 'queued';
+    public const STATUS_PROCESSING = 'processing';
+    public const STATUS_COMPLETED = 'completed';
+    public const STATUS_VERIFIED = 'verified';
+    public const STATUS_FAILED = 'failed';
+    public const STATUS_MISSING = 'missing';
+
+    private bool $savingGeneratedAsset = false;
+
+    public function isSavingGeneratedAsset(): bool
+    {
+        return $this->savingGeneratedAsset;
+    }
+
+    public function isGifAsset(Asset $asset): bool
+    {
+        if ($asset->id === null) {
+            return false;
+        }
+
+        if (ElementHelper::isDraftOrRevision($asset)) {
+            return false;
+        }
+
+        return strtolower((string)$asset->getExtension()) === 'gif';
+    }
+
+    public function scan(?int $limit = null, ?int $volumeId = null, bool $queue = false, bool $force = false): array
+    {
+        $result = [
+            'found' => 0,
+            'tracked' => 0,
+            'queued' => 0,
+            'skipped' => 0,
+            'errors' => 0,
+        ];
+
+        foreach ($this->gifAssetQuery($limit, $volumeId)->all() as $asset) {
+            if (!$asset instanceof Asset) {
+                continue;
+            }
+
+            $result['found']++;
+
+            try {
+                $this->prepareRecord($asset, $force);
+                $result['tracked']++;
+
+                if ($queue) {
+                    $queueResult = $this->queueAsset($asset, $force);
+                    $queueResult['queued'] ? $result['queued']++ : $result['skipped']++;
+                }
+            } catch (\Throwable $e) {
+                $result['errors']++;
+                Craft::error(sprintf('GIF to WebP scan failed for asset %s: %s', $asset->id, $e->getMessage()), __METHOD__);
+            }
+        }
+
+        return $result;
+    }
+
+    public function queueAsset(Asset $asset, bool $force = false, ?int $delay = null): array
+    {
+        if (!$this->isGifAsset($asset)) {
+            return [
+                'queued' => false,
+                'reason' => 'not-gif',
+                'record' => null,
+                'jobId' => null,
+            ];
+        }
+
+        $record = $this->prepareRecord($asset, $force);
+
+        if (!$force && $this->hasActiveJob($record)) {
+            return [
+                'queued' => false,
+                'reason' => 'already-active',
+                'record' => $record,
+                'jobId' => $record['lastJobId'] ?? null,
+            ];
+        }
+
+        if (!$force && $this->hasFreshOutput($record, $asset)) {
+            return [
+                'queued' => false,
+                'reason' => 'already-converted',
+                'record' => $record,
+                'jobId' => null,
+            ];
+        }
+
+        $now = $this->now();
+
+        $this->updateRecord((int)$record['id'], [
+            'status' => self::STATUS_QUEUED,
+            'queuedAt' => $now,
+            'startedAt' => null,
+            'completedAt' => null,
+            'verifiedAt' => null,
+            'lastError' => null,
+        ]);
+
+        $jobId = $this->pushJob(new ConvertGifJob([
+            'conversionId' => (int)$record['id'],
+            'force' => $force,
+        ]), $delay ?? $this->settings()->queueDelay);
+
+        $this->updateRecord((int)$record['id'], [
+            'lastJobId' => $jobId !== null ? (string)$jobId : null,
+        ]);
+
+        return [
+            'queued' => true,
+            'reason' => 'queued',
+            'record' => $this->getRecordById((int)$record['id']),
+            'jobId' => $jobId,
+        ];
+    }
+
+    public function queueAll(?int $limit = null, ?int $volumeId = null, bool $force = false, ?int $delay = null): array
+    {
+        $result = [
+            'found' => 0,
+            'queued' => 0,
+            'skipped' => 0,
+            'errors' => 0,
+        ];
+
+        foreach ($this->gifAssetQuery($limit, $volumeId)->all() as $asset) {
+            if (!$asset instanceof Asset) {
+                continue;
+            }
+
+            $result['found']++;
+
+            try {
+                $queueResult = $this->queueAsset($asset, $force, $delay);
+                $queueResult['queued'] ? $result['queued']++ : $result['skipped']++;
+            } catch (\Throwable $e) {
+                $result['errors']++;
+                Craft::error(sprintf('GIF to WebP queue failed for asset %s: %s', $asset->id, $e->getMessage()), __METHOD__);
+            }
+        }
+
+        return $result;
+    }
+
+    public function convertAsset(int $assetId, bool $force = false): array
+    {
+        $asset = $this->getAsset($assetId);
+
+        if (!$asset instanceof Asset || !$this->isGifAsset($asset)) {
+            return [
+                'converted' => false,
+                'status' => self::STATUS_MISSING,
+                'message' => sprintf('GIF asset %s was not found.', $assetId),
+                'record' => null,
+            ];
+        }
+
+        $record = $this->prepareRecord($asset, $force);
+
+        return $this->convertRecord((int)$record['id'], $force);
+    }
+
+    public function convertQueued(?int $limit = null, bool $force = false): array
+    {
+        $result = [
+            'processed' => 0,
+            'converted' => 0,
+            'skipped' => 0,
+            'failed' => 0,
+        ];
+
+        $query = (new Query())
+            ->from(self::TABLE)
+            ->where(['status' => [self::STATUS_PENDING, self::STATUS_QUEUED, self::STATUS_FAILED]])
+            ->orderBy(['queuedAt' => SORT_ASC, 'dateUpdated' => SORT_ASC]);
+
+        if ($limit !== null && $limit > 0) {
+            $query->limit($limit);
+        }
+
+        foreach ($query->all() as $record) {
+            $result['processed']++;
+            $conversion = $this->convertRecord((int)$record['id'], $force);
+
+            if ($conversion['converted']) {
+                $result['converted']++;
+            } elseif (($conversion['status'] ?? null) === self::STATUS_FAILED || ($conversion['status'] ?? null) === self::STATUS_MISSING) {
+                $result['failed']++;
+            } else {
+                $result['skipped']++;
+            }
+        }
+
+        return $result;
+    }
+
+    public function convertRecord(int $recordId, bool $force = false): array
+    {
+        $record = $this->getRecordById($recordId);
+
+        if ($record === null) {
+            return [
+                'converted' => false,
+                'status' => self::STATUS_MISSING,
+                'message' => sprintf('Conversion record %s was not found.', $recordId),
+                'record' => null,
+            ];
+        }
+
+        $asset = $this->getAsset((int)$record['assetId']);
+
+        if (!$asset instanceof Asset || !$this->isGifAsset($asset)) {
+            $this->markFailed($recordId, self::STATUS_MISSING, 'Source GIF asset is missing or is no longer a GIF.');
+
+            return [
+                'converted' => false,
+                'status' => self::STATUS_MISSING,
+                'message' => 'Source GIF asset is missing or is no longer a GIF.',
+                'record' => $this->getRecordById($recordId),
+            ];
+        }
+
+        $record = $this->prepareRecord($asset, false);
+
+        if (!$force && $this->hasFreshOutput($record, $asset)) {
+            $this->updateRecord((int)$record['id'], [
+                'status' => $this->freshOutputStatus($record),
+                'completedAt' => $record['completedAt'] ?? $this->now(),
+                'lastError' => null,
+            ]);
+
+            return [
+                'converted' => false,
+                'status' => self::STATUS_COMPLETED,
+                'message' => 'Fresh WebP output already exists.',
+                'record' => $this->getRecordById((int)$record['id']),
+            ];
+        }
+
+        $now = $this->now();
+
+        $this->updateRecord((int)$record['id'], [
+            'status' => self::STATUS_PROCESSING,
+            'attempts' => ((int)($record['attempts'] ?? 0)) + 1,
+            'startedAt' => $now,
+            'completedAt' => null,
+            'verifiedAt' => null,
+            'lastError' => null,
+        ]);
+
+        $sourceTemp = null;
+        $targetTemp = null;
+
+        try {
+            $sourceTemp = $asset->getCopyOfFile();
+            $targetTemp = $this->tempWebpPath($asset);
+
+            $process = $this->runGif2Webp($sourceTemp, $targetTemp);
+
+            if ($process['exitCode'] !== 0) {
+                throw new \RuntimeException(trim($process['output']) ?: sprintf('gif2webp exited with code %s.', $process['exitCode']));
+            }
+
+            if (!is_file($targetTemp) || filesize($targetTemp) === 0) {
+                throw new \RuntimeException('gif2webp did not produce a WebP file.');
+            }
+
+            $outputAsset = $this->saveOutputAsset($asset, $targetTemp);
+            $completedAt = $this->now();
+
+            $this->updateRecord((int)$record['id'], [
+                'outputAssetId' => $outputAsset->id,
+                'outputPath' => $outputAsset->getPath(),
+                'outputFilename' => $outputAsset->getFilename(),
+                'status' => self::STATUS_COMPLETED,
+                'completedAt' => $completedAt,
+                'verifiedAt' => null,
+                'lastError' => null,
+            ]);
+
+            return [
+                'converted' => true,
+                'status' => self::STATUS_COMPLETED,
+                'message' => sprintf('Converted asset %s to %s.', $asset->id, $outputAsset->filename),
+                'record' => $this->getRecordById((int)$record['id']),
+            ];
+        } catch (\Throwable $e) {
+            $this->markFailed((int)$record['id'], self::STATUS_FAILED, $e->getMessage());
+
+            Craft::error(sprintf('GIF to WebP conversion failed for asset %s: %s', $asset->id, $e->getMessage()), __METHOD__);
+
+            return [
+                'converted' => false,
+                'status' => self::STATUS_FAILED,
+                'message' => $e->getMessage(),
+                'record' => $this->getRecordById((int)$record['id']),
+            ];
+        } finally {
+            $this->removeTempFile($sourceTemp);
+            $this->removeTempFile($targetTemp);
+        }
+    }
+
+    public function verify(?int $assetId = null, ?int $limit = null): array
+    {
+        $result = [
+            'checked' => 0,
+            'verified' => 0,
+            'pending' => 0,
+            'missing' => 0,
+        ];
+
+        $query = (new Query())
+            ->from(self::TABLE)
+            ->where(['status' => [self::STATUS_COMPLETED, self::STATUS_VERIFIED]]);
+
+        if ($assetId !== null) {
+            $query->andWhere(['assetId' => $assetId]);
+        }
+
+        if ($limit !== null && $limit > 0) {
+            $query->limit($limit);
+        }
+
+        foreach ($query->all() as $record) {
+            $result['checked']++;
+
+            $source = $this->getAsset((int)$record['assetId']);
+            $output = !empty($record['outputAssetId']) ? $this->getAsset((int)$record['outputAssetId']) : null;
+
+            if (!$source instanceof Asset || !$this->isGifAsset($source) || !$output instanceof Asset || strtolower($output->getExtension()) !== 'webp') {
+                $this->markFailed((int)$record['id'], self::STATUS_MISSING, 'Source GIF or output WebP asset is missing.');
+                $result['missing']++;
+                continue;
+            }
+
+            if (($record['sourceSignature'] ?? null) !== $this->sourceSignature($source)) {
+                $this->updateRecord((int)$record['id'], [
+                    'status' => self::STATUS_PENDING,
+                    'lastError' => 'Source GIF changed after the last conversion.',
+                    'verifiedAt' => null,
+                ]);
+                $result['pending']++;
+                continue;
+            }
+
+            $this->updateRecord((int)$record['id'], [
+                'status' => self::STATUS_VERIFIED,
+                'verifiedAt' => $this->now(),
+                'lastError' => null,
+            ]);
+
+            $result['verified']++;
+        }
+
+        return $result;
+    }
+
+    public function retryFailed(?int $limit = null, ?int $delay = null): array
+    {
+        $result = [
+            'found' => 0,
+            'queued' => 0,
+            'skipped' => 0,
+            'errors' => 0,
+        ];
+
+        $query = (new Query())
+            ->from(self::TABLE)
+            ->where(['status' => self::STATUS_FAILED])
+            ->orderBy(['dateUpdated' => SORT_ASC]);
+
+        if ($limit !== null && $limit > 0) {
+            $query->limit($limit);
+        }
+
+        foreach ($query->all() as $record) {
+            $result['found']++;
+
+            $asset = $this->getAsset((int)$record['assetId']);
+
+            if (!$asset instanceof Asset || !$this->isGifAsset($asset)) {
+                $this->markFailed((int)$record['id'], self::STATUS_MISSING, 'Source GIF asset is missing or is no longer a GIF.');
+                $result['skipped']++;
+                continue;
+            }
+
+            try {
+                $queueResult = $this->queueAsset($asset, true, $delay);
+                $queueResult['queued'] ? $result['queued']++ : $result['skipped']++;
+            } catch (\Throwable $e) {
+                $result['errors']++;
+                Craft::error(sprintf('GIF to WebP retry failed for asset %s: %s', $asset->id, $e->getMessage()), __METHOD__);
+            }
+        }
+
+        return $result;
+    }
+
+    public function statusSummary(?string $status = null, int $limit = 20): array
+    {
+        $countQuery = (new Query())
+            ->select(['status', 'count' => new Expression('COUNT(*)')])
+            ->from(self::TABLE)
+            ->groupBy(['status'])
+            ->orderBy(['status' => SORT_ASC]);
+
+        $recordsQuery = (new Query())
+            ->from(self::TABLE)
+            ->orderBy(['dateUpdated' => SORT_DESC])
+            ->limit($limit);
+
+        if ($status !== null && $status !== '') {
+            $countQuery->where(['status' => $status]);
+            $recordsQuery->where(['status' => $status]);
+        }
+
+        return [
+            'counts' => $countQuery->all(),
+            'records' => $recordsQuery->all(),
+        ];
+    }
+
+    public function getRecordById(int $id): ?array
+    {
+        $record = (new Query())
+            ->from(self::TABLE)
+            ->where(['id' => $id])
+            ->one();
+
+        return $record ?: null;
+    }
+
+    private function gifAssetQuery(?int $limit = null, ?int $volumeId = null)
+    {
+        $query = Asset::find()
+            ->kind('image')
+            ->filename(['*.gif', '*.GIF'])
+            ->status(null)
+            ->unique()
+            ->orderBy(['dateUpdated' => SORT_DESC]);
+
+        if ($volumeId !== null && $volumeId > 0) {
+            $query->volumeId($volumeId);
+        }
+
+        if ($limit !== null && $limit > 0) {
+            $query->limit($limit);
+        }
+
+        return $query;
+    }
+
+    private function prepareRecord(Asset $asset, bool $force = false): array
+    {
+        $record = $this->getRecordByAssetId((int)$asset->id);
+        $signature = $this->sourceSignature($asset);
+        $sourceChanged = $record === null || ($record['sourceSignature'] ?? null) !== $signature;
+
+        $values = [
+            'assetId' => $asset->id,
+            'volumeId' => $asset->volumeId,
+            'folderId' => $asset->folderId,
+            'sourcePath' => $asset->getPath(),
+            'sourceSize' => $asset->size,
+            'sourceMtime' => $this->dateForDb($asset->dateModified ?? null),
+            'sourceSignature' => $signature,
+            'outputFilename' => $this->targetFilename($asset),
+        ];
+
+        if ($record === null) {
+            $now = $this->now();
+            $values['status'] = self::STATUS_PENDING;
+            $values['dateCreated'] = $now;
+            $values['dateUpdated'] = $now;
+
+            try {
+                Craft::$app->getDb()->createCommand()
+                    ->insert(self::TABLE, $values)
+                    ->execute();
+            } catch (IntegrityException $e) {
+                $record = $this->getRecordByAssetId((int)$asset->id);
+
+                if ($record === null) {
+                    throw $e;
+                }
+            }
+        } elseif ($force || $sourceChanged) {
+            if (!$this->hasActiveJob($record) || $force) {
+                $values['status'] = self::STATUS_PENDING;
+                $values['lastError'] = null;
+                $values['verifiedAt'] = null;
+
+                if ($sourceChanged) {
+                    $values['outputAssetId'] = null;
+                    $values['outputPath'] = null;
+                    $values['completedAt'] = null;
+                }
+            }
+
+            $this->updateRecord((int)$record['id'], $values);
+        } else {
+            $this->updateRecord((int)$record['id'], $values);
+        }
+
+        return $this->getRecordByAssetId((int)$asset->id);
+    }
+
+    private function getRecordByAssetId(int $assetId): ?array
+    {
+        $record = (new Query())
+            ->from(self::TABLE)
+            ->where(['assetId' => $assetId])
+            ->one();
+
+        return $record ?: null;
+    }
+
+    private function updateRecord(int $id, array $values): void
+    {
+        $values['dateUpdated'] = $this->now();
+
+        Craft::$app->getDb()->createCommand()
+            ->update(self::TABLE, $values, ['id' => $id])
+            ->execute();
+    }
+
+    private function markFailed(int $recordId, string $status, string $message): void
+    {
+        $this->updateRecord($recordId, [
+            'status' => $status,
+            'lastError' => $message,
+        ]);
+    }
+
+    private function hasActiveJob(array $record): bool
+    {
+        return in_array($record['status'] ?? null, [self::STATUS_QUEUED, self::STATUS_PROCESSING], true);
+    }
+
+    private function hasFreshOutput(array $record, Asset $asset): bool
+    {
+        if (($record['sourceSignature'] ?? null) !== $this->sourceSignature($asset)) {
+            return false;
+        }
+
+        $output = null;
+
+        if (!empty($record['outputAssetId'])) {
+            $output = $this->getAsset((int)$record['outputAssetId']);
+        }
+
+        if (!$output instanceof Asset) {
+            $output = $this->findOutputAssetForSource($asset);
+        }
+
+        if (!$output instanceof Asset || strtolower($output->getExtension()) !== 'webp') {
+            return false;
+        }
+
+        if (!$this->outputIsAtLeastAsNewAsSource($output, $asset)) {
+            return false;
+        }
+
+        $this->updateRecord((int)$record['id'], [
+            'outputAssetId' => $output->id,
+            'outputPath' => $output->getPath(),
+            'outputFilename' => $output->getFilename(),
+            'status' => $this->freshOutputStatus($record),
+            'completedAt' => $record['completedAt'] ?? $this->now(),
+            'lastError' => null,
+        ]);
+
+        return true;
+    }
+
+    private function freshOutputStatus(array $record): string
+    {
+        return ($record['status'] ?? null) === self::STATUS_VERIFIED ? self::STATUS_VERIFIED : self::STATUS_COMPLETED;
+    }
+
+    private function findOutputAssetForSource(Asset $sourceAsset): ?Asset
+    {
+        if ($sourceAsset->folderId === null || $sourceAsset->volumeId === null) {
+            return null;
+        }
+
+        $asset = Asset::find()
+            ->volumeId($sourceAsset->volumeId)
+            ->folderId($sourceAsset->folderId)
+            ->filename($this->targetFilename($sourceAsset))
+            ->status(null)
+            ->one();
+
+        return $asset instanceof Asset ? $asset : null;
+    }
+
+    private function outputIsAtLeastAsNewAsSource(Asset $outputAsset, Asset $sourceAsset): bool
+    {
+        $outputModified = $outputAsset->dateModified ?? null;
+        $sourceModified = $sourceAsset->dateModified ?? null;
+
+        if (!$outputModified instanceof \DateTimeInterface || !$sourceModified instanceof \DateTimeInterface) {
+            return true;
+        }
+
+        return $outputModified->getTimestamp() >= $sourceModified->getTimestamp();
+    }
+
+    private function pushJob(ConvertGifJob $job, int $delay)
+    {
+        $queue = Craft::$app->getQueue();
+
+        if ($delay > 0 && method_exists($queue, 'delay')) {
+            return $queue->delay($delay)->push($job);
+        }
+
+        return $queue->push($job);
+    }
+
+    private function getAsset(int $assetId): ?Asset
+    {
+        $asset = Asset::find()
+            ->id($assetId)
+            ->status(null)
+            ->one();
+
+        return $asset instanceof Asset ? $asset : null;
+    }
+
+    private function saveOutputAsset(Asset $sourceAsset, string $webpPath): Asset
+    {
+        $asset = new Asset();
+        $asset->tempFilePath = $webpPath;
+        $asset->filename = $this->targetFilename($sourceAsset);
+        $asset->newFolderId = $sourceAsset->folderId;
+        $asset->volumeId = $sourceAsset->volumeId;
+        $asset->avoidFilenameConflicts = true;
+
+        $this->savingGeneratedAsset = true;
+
+        try {
+            if (!Craft::$app->getElements()->saveElement($asset)) {
+                throw new \RuntimeException(implode(' ', $asset->getErrorSummary(true)));
+            }
+        } finally {
+            $this->savingGeneratedAsset = false;
+        }
+
+        return $asset;
+    }
+
+    private function runGif2Webp(string $sourcePath, string $targetPath): array
+    {
+        $settings = $this->settings();
+        $binary = App::parseEnv($settings->gif2webpPath) ?: 'gif2webp';
+        $command = [
+            $binary,
+            '-q',
+            (string)$settings->quality,
+            '-m',
+            (string)$settings->method,
+        ];
+
+        if ($settings->multiThreaded) {
+            $command[] = '-mt';
+        }
+
+        $command[] = $sourcePath;
+        $command[] = '-o';
+        $command[] = $targetPath;
+
+        $descriptorSpec = [
+            1 => ['pipe', 'w'],
+            2 => ['pipe', 'w'],
+        ];
+
+        $process = proc_open($command, $descriptorSpec, $pipes);
+
+        if (!is_resource($process)) {
+            throw new \RuntimeException('Could not start gif2webp.');
+        }
+
+        $stdout = stream_get_contents($pipes[1]);
+        fclose($pipes[1]);
+
+        $stderr = stream_get_contents($pipes[2]);
+        fclose($pipes[2]);
+
+        $exitCode = proc_close($process);
+
+        return [
+            'exitCode' => $exitCode,
+            'output' => trim((string)$stdout . "\n" . (string)$stderr),
+        ];
+    }
+
+    private function targetFilename(Asset $asset): string
+    {
+        return $asset->getFilename(false) . '.webp';
+    }
+
+    private function tempWebpPath(Asset $asset): string
+    {
+        $directory = Craft::$app->getPath()->getTempPath() . DIRECTORY_SEPARATOR . 'gif-to-webp';
+        FileHelper::createDirectory($directory);
+
+        return $directory . DIRECTORY_SEPARATOR . sprintf(
+            '%s-%s.webp',
+            $asset->id,
+            bin2hex(random_bytes(8))
+        );
+    }
+
+    private function removeTempFile(?string $path): void
+    {
+        if ($path !== null && is_file($path)) {
+            FileHelper::unlink($path);
+        }
+    }
+
+    private function sourceSignature(Asset $asset): string
+    {
+        $modified = $asset->dateModified ?? null;
+
+        if ($modified instanceof \DateTimeInterface) {
+            $modified = $modified->getTimestamp();
+        }
+
+        return hash('sha256', implode('|', [
+            $asset->id,
+            $asset->volumeId,
+            $asset->folderId,
+            $asset->getPath(),
+            $asset->size,
+            (string)$modified,
+        ]));
+    }
+
+    private function now(): string
+    {
+        return gmdate('Y-m-d H:i:s');
+    }
+
+    private function dateForDb($date): ?string
+    {
+        if (!$date instanceof \DateTimeInterface) {
+            return null;
+        }
+
+        $copy = (clone $date)->setTimezone(new \DateTimeZone('UTC'));
+
+        return $copy->format('Y-m-d H:i:s');
+    }
+
+    private function settings(): Settings
+    {
+        return GifToWebp::getInstance()->getSettings();
+    }
+}
