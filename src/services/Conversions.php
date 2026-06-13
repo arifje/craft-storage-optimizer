@@ -768,7 +768,7 @@ class Conversions extends Component
         return $record ?: null;
     }
 
-    public function replaceAssetReferences(Asset $sourceAsset, Asset $outputAsset): array
+    public function replaceAssetReferences(Asset $sourceAsset, Asset $outputAsset, ?int $sourceElementId = null): array
     {
         $summary = $this->emptyReferenceReplacementSummary(true);
         $sourceAssetId = (int)($sourceAsset->id ?? 0);
@@ -779,11 +779,16 @@ class Conversions extends Component
         }
 
         $db = Craft::$app->getDb();
-        $relations = (new Query())
+        $query = (new Query())
             ->select(['id', 'fieldId', 'sourceId', 'sourceSiteId'])
             ->from(Table::RELATIONS)
-            ->where(['targetId' => $sourceAssetId])
-            ->all($db);
+            ->where(['targetId' => $sourceAssetId]);
+
+        if ($sourceElementId !== null) {
+            $query->andWhere(['sourceId' => $sourceElementId]);
+        }
+
+        $relations = $query->all($db);
 
         $summary['relations'] = count($relations);
 
@@ -841,6 +846,48 @@ class Conversions extends Component
                 ),
                 __METHOD__
             );
+        }
+
+        return $summary;
+    }
+
+    public function replaceReadyGifReferencesForSourceElement(int $sourceElementId): array
+    {
+        $enabled = (bool)$this->settings()->replaceAssetReferences && (bool)$this->settings()->convertToWebp;
+        $summary = $this->emptyReferenceReplacementSummary($enabled);
+        $summary['sourceElementId'] = $sourceElementId;
+        $summary['gifAssets'] = 0;
+
+        if (!$enabled || $sourceElementId <= 0) {
+            return $summary;
+        }
+
+        $targetIds = (new Query())
+            ->select(['targetId'])
+            ->distinct()
+            ->from(Table::RELATIONS)
+            ->where(['sourceId' => $sourceElementId])
+            ->column(Craft::$app->getDb());
+
+        foreach ($targetIds as $targetId) {
+            $sourceAsset = $this->getAsset((int)$targetId);
+
+            if (!$sourceAsset instanceof Asset || !$this->isGifAsset($sourceAsset)) {
+                continue;
+            }
+
+            $outputAsset = $this->getWebpAsset($sourceAsset);
+
+            if (!$outputAsset instanceof Asset || (int)$outputAsset->id === (int)$sourceAsset->id) {
+                continue;
+            }
+
+            $replacement = $this->replaceAssetReferences($sourceAsset, $outputAsset, $sourceElementId);
+            $summary['gifAssets']++;
+            $summary['relations'] += $replacement['relations'];
+            $summary['updated'] += $replacement['updated'];
+            $summary['deletedDuplicates'] += $replacement['deletedDuplicates'];
+            $summary['replaced'] += $replacement['replaced'];
         }
 
         return $summary;

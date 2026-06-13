@@ -34,7 +34,7 @@ php craft plugin/install storage-optimizer
 - **Skip WebP files that are not smaller**: enabled by default. If the generated WebP is the same size or larger than the source GIF, it is not saved and GIF references are not replaced. You can also require a minimum savings percentage.
 - **MP4 CRF**, **preset**, **faststart**, and **minimum savings** control ffmpeg output. MP4 generation is opt-in, and generated MP4 assets never replace image-field relations automatically.
 
-Asset-save conversion never runs inline. It only creates or updates a conversion state row and pushes a queue job. If reference replacement is enabled, relation updates happen inside that queue job after the WebP asset has been saved. MP4 assets are intended for frontend video rendering via Twig helpers.
+Asset-save conversion never runs inline. It only creates or updates a conversion state row and pushes a queue job. If reference replacement is enabled, relation updates happen inside that queue job after the WebP asset has been saved. The plugin also queues a short post-save repair for non-asset elements, so GIFs uploaded in unsaved entries or Matrix blocks can be swapped after Craft has written the field relations. MP4 assets are intended for frontend video rendering via Twig helpers and never replace image-field relations automatically.
 
 ## Asset Optimizer
 

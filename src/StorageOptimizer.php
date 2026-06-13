@@ -2,6 +2,7 @@
 
 namespace arifje\craftstorageoptimizer;
 
+use arifje\craftstorageoptimizer\jobs\RepairElementReferencesJob;
 use arifje\craftstorageoptimizer\models\Settings;
 use arifje\craftstorageoptimizer\services\AssetUsage;
 use arifje\craftstorageoptimizer\services\Conversions;
@@ -53,6 +54,7 @@ class StorageOptimizer extends Plugin
         $this->registerTwigVariable();
         $this->registerUtility();
         $this->registerAssetSaveHandler();
+        $this->registerElementReferenceRepairHandler();
     }
 
     protected function createSettingsModel(): ?Model
@@ -118,6 +120,45 @@ class StorageOptimizer extends Plugin
                 } catch (\Throwable $e) {
                     Craft::error(
                         sprintf('Could not enqueue GIF media conversion for asset %s: %s', $asset->id, $e->getMessage()),
+                        __METHOD__
+                    );
+                }
+            }
+        );
+    }
+
+    private function registerElementReferenceRepairHandler(): void
+    {
+        Event::on(
+            Element::class,
+            Element::EVENT_AFTER_SAVE,
+            function(ModelEvent $event): void {
+                $element = $event->sender;
+
+                if (!$element instanceof Element || $element instanceof Asset || $element->id === null) {
+                    return;
+                }
+
+                $settings = $this->getSettings();
+
+                if (!$settings->replaceAssetReferences || !$settings->convertToWebp) {
+                    return;
+                }
+
+                try {
+                    $queue = Craft::$app->getQueue();
+                    $job = new RepairElementReferencesJob([
+                        'sourceElementId' => (int)$element->id,
+                    ]);
+
+                    if (method_exists($queue, 'delay')) {
+                        $queue->delay(5)->push($job);
+                    } else {
+                        $queue->push($job);
+                    }
+                } catch (\Throwable $e) {
+                    Craft::error(
+                        sprintf('Could not enqueue GIF reference repair for element %s: %s', $element->id, $e->getMessage()),
                         __METHOD__
                     );
                 }
