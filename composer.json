@@ -1,6 +1,6 @@
 {
   "name": "arifje/craft-storage-optimizer",
-  "description": "Optimize Craft CMS asset storage with GIF-to-WebP conversion and safe asset cleanup insights.",
+  "description": "Optimize Craft CMS asset storage with GIF-to-WebP/MP4 conversion and safe asset cleanup insights.",
   "type": "craft-plugin",
   "license": "MIT",
   "authors": [
@@ -21,7 +21,7 @@
     "handle": "storage-optimizer",
     "name": "Craft Storage Optimizer",
     "class": "arifje\\craftstorageoptimizer\\StorageOptimizer",
-    "schemaVersion": "1.2.0",
-    "version": "2.0.10"
+    "schemaVersion": "1.3.0",
+    "version": "2.1.0"
   }
 }

@@ -27,6 +27,11 @@ class Install extends Migration
                 'outputAssetId' => $this->integer(),
                 'outputPath' => $this->string(1024),
                 'outputFilename' => $this->string(255),
+                'mp4AssetId' => $this->integer(),
+                'mp4Path' => $this->string(1024),
+                'mp4Filename' => $this->string(255),
+                'mp4Status' => $this->string(16),
+                'mp4LastError' => $this->text(),
                 'status' => $this->string(16)->notNull()->defaultValue(Conversions::STATUS_PENDING),
                 'attempts' => $this->integer()->notNull()->defaultValue(0),
                 'lastJobId' => $this->string(255),
@@ -42,9 +47,11 @@ class Install extends Migration
             $this->createIndex(null, Conversions::TABLE, ['assetId'], true);
             $this->createIndex(null, Conversions::TABLE, ['status']);
             $this->createIndex(null, Conversions::TABLE, ['outputAssetId']);
+            $this->createIndex(null, Conversions::TABLE, ['mp4AssetId']);
 
             $this->addForeignKey(null, Conversions::TABLE, ['assetId'], '{{%elements}}', ['id'], 'CASCADE');
             $this->addForeignKey(null, Conversions::TABLE, ['outputAssetId'], '{{%elements}}', ['id'], 'SET NULL');
+            $this->addForeignKey(null, Conversions::TABLE, ['mp4AssetId'], '{{%elements}}', ['id'], 'SET NULL');
         }
 
         $this->createInsightsTables();

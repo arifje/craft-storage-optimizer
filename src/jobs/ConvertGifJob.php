@@ -24,10 +24,10 @@ class ConvertGifJob extends BaseJob
         $assetId = $this->assetId ?? $this->assetIdFromConversion();
 
         if ($assetId !== null) {
-            return sprintf('Converting GIF asset #%s to animated WebP', $assetId);
+            return sprintf('Converting GIF asset #%s to optimized media', $assetId);
         }
 
-        return sprintf('Converting GIF conversion #%s to animated WebP', $this->conversionId);
+        return sprintf('Converting GIF conversion #%s to optimized media', $this->conversionId);
     }
 
     private function assetIdFromConversion(): ?int

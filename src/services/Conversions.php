@@ -76,11 +76,53 @@ class Conversions extends Component
 
         $output = $this->findOutputAssetForSource($asset);
 
-        if ($output instanceof Asset && $this->outputIsAtLeastAsNewAsSource($output, $asset) && $this->outputAssetIsWorthUsing($asset, $output)['keep']) {
+        if ($output instanceof Asset && $this->outputIsAtLeastAsNewAsSource($output, $asset) && $this->outputAssetIsWorthUsing($asset, $output, 'webp')['keep']) {
             return $output;
         }
 
         return null;
+    }
+
+    public function getMp4Asset(Asset $asset): ?Asset
+    {
+        if ($asset->id === null) {
+            return null;
+        }
+
+        if (strtolower((string)$asset->getExtension()) === 'mp4' && $this->getSourceGifAsset($asset) instanceof Asset) {
+            return $asset;
+        }
+
+        if (!$this->isGifAsset($asset)) {
+            return null;
+        }
+
+        $record = $this->getRecordByAssetId((int)$asset->id);
+
+        if ($record !== null) {
+            $output = $this->freshMp4Output($record, $asset);
+
+            if ($output instanceof Asset) {
+                return $output;
+            }
+        }
+
+        $output = $this->findMp4AssetForSource($asset);
+
+        if ($output instanceof Asset && $this->outputIsAtLeastAsNewAsSource($output, $asset) && $this->outputAssetIsWorthUsing($asset, $output, 'mp4')['keep']) {
+            return $output;
+        }
+
+        return null;
+    }
+
+    public function getPreferredMediaAsset(Asset $asset): ?Asset
+    {
+        if ($asset->id === null) {
+            return null;
+        }
+
+        return $this->getMp4Asset($asset) ?? $this->getWebpAsset($asset) ?? ($this->isGifAsset($asset) ? $asset : null);
     }
 
     public function getSourceGifAsset(Asset $asset): ?Asset
@@ -93,11 +135,13 @@ class Conversions extends Component
             return $asset;
         }
 
-        if (strtolower((string)$asset->getExtension()) !== 'webp') {
+        $extension = strtolower((string)$asset->getExtension());
+
+        if (!in_array($extension, ['webp', 'mp4'], true)) {
             return null;
         }
 
-        $record = $this->getRecordByOutputAssetId((int)$asset->id);
+        $record = $extension === 'mp4' ? $this->getRecordByMp4AssetId((int)$asset->id) : $this->getRecordByOutputAssetId((int)$asset->id);
 
         if ($record === null) {
             return null;
@@ -115,6 +159,16 @@ class Conversions extends Component
         }
 
         return strtolower((string)$asset->getExtension()) === 'webp'
+            && $this->getSourceGifAsset($asset) instanceof Asset;
+    }
+
+    public function isGifOrConvertedMedia(Asset $asset): bool
+    {
+        if ($this->isGifAsset($asset)) {
+            return true;
+        }
+
+        return in_array(strtolower((string)$asset->getExtension()), ['webp', 'mp4'], true)
             && $this->getSourceGifAsset($asset) instanceof Asset;
     }
 
@@ -168,7 +222,7 @@ class Conversions extends Component
                 }
             } catch (\Throwable $e) {
                 $result['errors']++;
-                Craft::error(sprintf('GIF to WebP scan failed for asset %s: %s', $asset->id, $e->getMessage()), __METHOD__);
+                Craft::error(sprintf('GIF media scan failed for asset %s: %s', $asset->id, $e->getMessage()), __METHOD__);
             }
         }
 
@@ -188,6 +242,15 @@ class Conversions extends Component
 
         $record = $this->prepareRecord($asset, $force);
 
+        if (!$this->hasEnabledOutputTarget()) {
+            return [
+                'queued' => false,
+                'reason' => 'no-enabled-targets',
+                'record' => $record,
+                'jobId' => null,
+            ];
+        }
+
         if (!$force && $this->hasActiveJob($record)) {
             return [
                 'queued' => false,
@@ -197,7 +260,7 @@ class Conversions extends Component
             ];
         }
 
-        if (!$force && ($record['status'] ?? null) === self::STATUS_SKIPPED && $this->settings()->skipLargerWebp) {
+        if (!$force && ($record['status'] ?? null) === self::STATUS_SKIPPED && $this->skippedRecordShouldStaySkipped($record)) {
             return [
                 'queued' => false,
                 'reason' => 'previously-skipped',
@@ -224,11 +287,13 @@ class Conversions extends Component
 
         $this->updateRecord((int)$record['id'], [
             'status' => self::STATUS_QUEUED,
+            'mp4Status' => $this->settings()->convertToMp4 ? self::STATUS_QUEUED : ($record['mp4Status'] ?? null),
             'queuedAt' => $now,
             'startedAt' => null,
             'completedAt' => null,
             'verifiedAt' => null,
             'lastError' => null,
+            'mp4LastError' => null,
         ]);
 
         $jobId = $this->pushJob(new ConvertGifJob([
@@ -272,7 +337,7 @@ class Conversions extends Component
                 $result['referencesReplaced'] += (int)($queueResult['referencesReplaced'] ?? 0);
             } catch (\Throwable $e) {
                 $result['errors']++;
-                Craft::error(sprintf('GIF to WebP queue failed for asset %s: %s', $asset->id, $e->getMessage()), __METHOD__);
+                Craft::error(sprintf('GIF media queue failed for asset %s: %s', $asset->id, $e->getMessage()), __METHOD__);
             }
         }
 
@@ -362,6 +427,22 @@ class Conversions extends Component
 
         $record = $this->prepareRecord($asset, false);
 
+        if (!$this->hasEnabledOutputTarget()) {
+            $message = 'No conversion output targets are enabled.';
+            $this->updateRecord((int)$record['id'], [
+                'status' => self::STATUS_SKIPPED,
+                'lastError' => $message,
+            ]);
+
+            return [
+                'converted' => false,
+                'status' => self::STATUS_SKIPPED,
+                'message' => $message,
+                'record' => $this->getRecordById((int)$record['id']),
+                'referencesReplaced' => 0,
+            ];
+        }
+
         if (!$force && $this->hasFreshOutput($record, $asset)) {
             $record = $this->getRecordById((int)$record['id']) ?? $record;
             $outputAsset = !empty($record['outputAssetId']) ? $this->getAsset((int)$record['outputAssetId']) : $this->findOutputAssetForSource($asset);
@@ -376,7 +457,7 @@ class Conversions extends Component
             return [
                 'converted' => false,
                 'status' => self::STATUS_COMPLETED,
-                'message' => $this->conversionMessage('Fresh WebP output already exists.', $replacement),
+                'message' => $this->conversionMessage('Fresh generated output already exists.', $replacement),
                 'record' => $this->getRecordById((int)$record['id']),
                 'referencesReplaced' => $replacement['replaced'],
             ];
@@ -391,72 +472,121 @@ class Conversions extends Component
             'completedAt' => null,
             'verifiedAt' => null,
             'lastError' => null,
+            'mp4Status' => $this->settings()->convertToMp4 ? self::STATUS_PROCESSING : ($record['mp4Status'] ?? null),
+            'mp4LastError' => null,
         ]);
 
         $sourceTemp = null;
-        $targetTemp = null;
+        $webpTemp = null;
+        $mp4Temp = null;
 
         try {
             $sourceTemp = $asset->getCopyOfFile();
-            $targetTemp = $this->tempWebpPath($asset);
+            $updates = [
+                'verifiedAt' => null,
+            ];
+            $messages = [];
+            $errors = [];
+            $converted = false;
+            $webpAsset = null;
 
-            $process = $this->runGif2Webp($sourceTemp, $targetTemp);
+            if ($this->settings()->convertToWebp) {
+                try {
+                    $webpTemp = $this->tempWebpPath($asset);
+                    $process = $this->runGif2Webp($sourceTemp, $webpTemp);
 
-            if ($process['exitCode'] !== 0) {
-                throw new \RuntimeException(trim($process['output']) ?: sprintf('gif2webp exited with code %s.', $process['exitCode']));
+                    if ($process['exitCode'] !== 0) {
+                        throw new \RuntimeException(trim($process['output']) ?: sprintf('gif2webp exited with code %s.', $process['exitCode']));
+                    }
+
+                    if (!is_file($webpTemp) || filesize($webpTemp) === 0) {
+                        throw new \RuntimeException('gif2webp did not produce a WebP file.');
+                    }
+
+                    $sizeCheck = $this->generatedOutputIsWorthSaving($sourceTemp, $webpTemp, 'webp');
+
+                    if (!$sizeCheck['keep']) {
+                        $messages[] = $this->sizeSkipMessage($sizeCheck);
+                    } else {
+                        $webpAsset = $this->saveOutputAsset($asset, $webpTemp, $this->targetFilename($asset));
+                        $updates['outputAssetId'] = $webpAsset->id;
+                        $updates['outputPath'] = $webpAsset->getPath();
+                        $updates['outputFilename'] = $webpAsset->getFilename();
+                        $converted = true;
+                        $messages[] = sprintf('Converted asset %s to %s.', $asset->id, $webpAsset->filename);
+                    }
+                } catch (\Throwable $e) {
+                    $errors[] = sprintf('WebP: %s', $e->getMessage());
+                }
             }
 
-            if (!is_file($targetTemp) || filesize($targetTemp) === 0) {
-                throw new \RuntimeException('gif2webp did not produce a WebP file.');
+            $mp4Asset = null;
+
+            if ($this->settings()->convertToMp4) {
+                try {
+                    $mp4Temp = $this->tempMp4Path($asset);
+                    $process = $this->runFfmpegGifToMp4($sourceTemp, $mp4Temp);
+
+                    if ($process['exitCode'] !== 0) {
+                        throw new \RuntimeException(trim($process['output']) ?: sprintf('ffmpeg exited with code %s.', $process['exitCode']));
+                    }
+
+                    if (!is_file($mp4Temp) || filesize($mp4Temp) === 0) {
+                        throw new \RuntimeException('ffmpeg did not produce an MP4 file.');
+                    }
+
+                    $sizeCheck = $this->generatedOutputIsWorthSaving($sourceTemp, $mp4Temp, 'mp4');
+
+                    if (!$sizeCheck['keep']) {
+                        $updates['mp4Status'] = self::STATUS_SKIPPED;
+                        $updates['mp4LastError'] = $this->sizeSkipMessage($sizeCheck);
+                        $messages[] = $updates['mp4LastError'];
+                    } else {
+                        $mp4Asset = $this->saveOutputAsset($asset, $mp4Temp, $this->targetMp4Filename($asset));
+                        $updates['mp4AssetId'] = $mp4Asset->id;
+                        $updates['mp4Path'] = $mp4Asset->getPath();
+                        $updates['mp4Filename'] = $mp4Asset->getFilename();
+                        $updates['mp4Status'] = self::STATUS_COMPLETED;
+                        $updates['mp4LastError'] = null;
+                        $converted = true;
+                        $messages[] = sprintf('Converted asset %s to %s.', $asset->id, $mp4Asset->filename);
+                    }
+                } catch (\Throwable $e) {
+                    $updates['mp4Status'] = self::STATUS_FAILED;
+                    $updates['mp4LastError'] = $e->getMessage();
+                    $errors[] = sprintf('MP4: %s', $e->getMessage());
+                }
             }
 
-            $sizeCheck = $this->generatedWebpIsWorthSaving($sourceTemp, $targetTemp);
-
-            if (!$sizeCheck['keep']) {
-                $message = $this->sizeSkipMessage($sizeCheck);
-
-                $this->updateRecord((int)$record['id'], [
-                    'status' => self::STATUS_SKIPPED,
-                    'completedAt' => $this->now(),
-                    'verifiedAt' => null,
-                    'lastError' => $message,
-                ]);
-
-                return [
-                    'converted' => false,
-                    'status' => self::STATUS_SKIPPED,
-                    'message' => $message,
-                    'record' => $this->getRecordById((int)$record['id']),
-                    'referencesReplaced' => 0,
-                ];
-            }
-
-            $outputAsset = $this->saveOutputAsset($asset, $targetTemp);
             $completedAt = $this->now();
+            $status = $converted ? self::STATUS_COMPLETED : (!empty($errors) ? self::STATUS_FAILED : self::STATUS_SKIPPED);
+            $message = trim(implode(' ', array_merge($messages, $errors)));
 
-            $this->updateRecord((int)$record['id'], [
-                'outputAssetId' => $outputAsset->id,
-                'outputPath' => $outputAsset->getPath(),
-                'outputFilename' => $outputAsset->getFilename(),
-                'status' => self::STATUS_COMPLETED,
+            if ($message === '') {
+                $message = $converted ? 'Generated output was created.' : 'No conversion output was created.';
+            }
+
+            $this->updateRecord((int)$record['id'], array_merge($updates, [
+                'status' => $status,
                 'completedAt' => $completedAt,
                 'verifiedAt' => null,
-                'lastError' => null,
-            ]);
+                'lastError' => !empty($errors) || !$converted ? $message : null,
+            ]));
 
-            $replacement = $this->replaceAssetReferencesIfEnabled($asset, $outputAsset);
+            $replacement = $this->replaceAssetReferencesIfEnabled($asset, $webpAsset);
+            $message = $this->conversionMessage($message, $replacement);
 
             return [
-                'converted' => true,
-                'status' => self::STATUS_COMPLETED,
-                'message' => $this->conversionMessage(sprintf('Converted asset %s to %s.', $asset->id, $outputAsset->filename), $replacement),
+                'converted' => $converted,
+                'status' => $status,
+                'message' => $message,
                 'record' => $this->getRecordById((int)$record['id']),
                 'referencesReplaced' => $replacement['replaced'],
             ];
         } catch (\Throwable $e) {
             $this->markFailed((int)$record['id'], self::STATUS_FAILED, $e->getMessage());
 
-            Craft::error(sprintf('GIF to WebP conversion failed for asset %s: %s', $asset->id, $e->getMessage()), __METHOD__);
+            Craft::error(sprintf('GIF media conversion failed for asset %s: %s', $asset->id, $e->getMessage()), __METHOD__);
 
             return [
                 'converted' => false,
@@ -466,7 +596,8 @@ class Conversions extends Component
             ];
         } finally {
             $this->removeTempFile($sourceTemp);
-            $this->removeTempFile($targetTemp);
+            $this->removeTempFile($webpTemp);
+            $this->removeTempFile($mp4Temp);
         }
     }
 
@@ -497,9 +628,23 @@ class Conversions extends Component
 
             $source = $this->getAsset((int)$record['assetId']);
             $output = !empty($record['outputAssetId']) ? $this->getAsset((int)$record['outputAssetId']) : null;
+            $mp4 = !empty($record['mp4AssetId']) ? $this->getAsset((int)$record['mp4AssetId']) : null;
+            $settings = $this->settings();
 
-            if (!$source instanceof Asset || !$this->isGifAsset($source) || !$output instanceof Asset || strtolower($output->getExtension()) !== 'webp') {
-                $this->markFailed((int)$record['id'], self::STATUS_MISSING, 'Source GIF or output WebP asset is missing.');
+            if (!$source instanceof Asset || !$this->isGifAsset($source)) {
+                $this->markFailed((int)$record['id'], self::STATUS_MISSING, 'Source GIF asset is missing.');
+                $result['missing']++;
+                continue;
+            }
+
+            if ($settings->convertToWebp && (!$output instanceof Asset || strtolower($output->getExtension()) !== 'webp')) {
+                $this->markFailed((int)$record['id'], self::STATUS_MISSING, 'Output WebP asset is missing.');
+                $result['missing']++;
+                continue;
+            }
+
+            if ($settings->convertToMp4 && (!$mp4 instanceof Asset || strtolower($mp4->getExtension()) !== 'mp4')) {
+                $this->markFailed((int)$record['id'], self::STATUS_MISSING, 'Output MP4 asset is missing.');
                 $result['missing']++;
                 continue;
             }
@@ -563,7 +708,7 @@ class Conversions extends Component
                 $queueResult['queued'] ? $result['queued']++ : $result['skipped']++;
             } catch (\Throwable $e) {
                 $result['errors']++;
-                Craft::error(sprintf('GIF to WebP retry failed for asset %s: %s', $asset->id, $e->getMessage()), __METHOD__);
+                Craft::error(sprintf('GIF media retry failed for asset %s: %s', $asset->id, $e->getMessage()), __METHOD__);
             }
         }
 
@@ -616,6 +761,7 @@ class Conversions extends Component
                 'or',
                 ['assetId' => $asset->id],
                 ['outputAssetId' => $asset->id],
+                ['mp4AssetId' => $asset->id],
             ])
             ->one();
 
@@ -774,6 +920,7 @@ class Conversions extends Component
             'sourceMtime' => $this->dateForDb($asset->dateModified ?? null),
             'sourceSignature' => $signature,
             'outputFilename' => $this->targetFilename($asset),
+            'mp4Filename' => $this->targetMp4Filename($asset),
         ];
 
         if ($record === null) {
@@ -802,6 +949,10 @@ class Conversions extends Component
                 if ($sourceChanged) {
                     $values['outputAssetId'] = null;
                     $values['outputPath'] = null;
+                    $values['mp4AssetId'] = null;
+                    $values['mp4Path'] = null;
+                    $values['mp4Status'] = null;
+                    $values['mp4LastError'] = null;
                     $values['completedAt'] = null;
                 }
             }
@@ -834,6 +985,16 @@ class Conversions extends Component
         return $record ?: null;
     }
 
+    private function getRecordByMp4AssetId(int $assetId): ?array
+    {
+        $record = (new Query())
+            ->from(self::TABLE)
+            ->where(['mp4AssetId' => $assetId])
+            ->one();
+
+        return $record ?: null;
+    }
+
     private function updateRecord(int $id, array $values): void
     {
         $values['dateUpdated'] = $this->now();
@@ -856,12 +1017,78 @@ class Conversions extends Component
         return in_array($record['status'] ?? null, [self::STATUS_QUEUED, self::STATUS_PROCESSING], true);
     }
 
+    private function hasEnabledOutputTarget(): bool
+    {
+        $settings = $this->settings();
+
+        return (bool)$settings->convertToWebp || (bool)$settings->convertToMp4;
+    }
+
+    private function skippedRecordShouldStaySkipped(array $record): bool
+    {
+        $settings = $this->settings();
+
+        if ($settings->convertToMp4 && empty($record['mp4AssetId']) && ($record['mp4Status'] ?? null) !== self::STATUS_SKIPPED) {
+            return false;
+        }
+
+        if ($settings->convertToWebp && !$settings->skipLargerWebp) {
+            return false;
+        }
+
+        if ($settings->convertToMp4 && !$settings->skipLargerMp4) {
+            return false;
+        }
+
+        return true;
+    }
+
     private function hasFreshOutput(array $record, Asset $asset): bool
     {
         if (($record['sourceSignature'] ?? null) !== $this->sourceSignature($asset)) {
             return false;
         }
 
+        $settings = $this->settings();
+        $updates = [
+            'status' => $this->freshOutputStatus($record),
+            'completedAt' => $record['completedAt'] ?? $this->now(),
+            'lastError' => null,
+        ];
+
+        if ($settings->convertToWebp) {
+            $output = $this->freshWebpOutput($record, $asset);
+
+            if (!$output instanceof Asset) {
+                return false;
+            }
+
+            $updates['outputAssetId'] = $output->id;
+            $updates['outputPath'] = $output->getPath();
+            $updates['outputFilename'] = $output->getFilename();
+        }
+
+        if ($settings->convertToMp4) {
+            $mp4 = $this->freshMp4Output($record, $asset);
+
+            if (!$mp4 instanceof Asset) {
+                return false;
+            }
+
+            $updates['mp4AssetId'] = $mp4->id;
+            $updates['mp4Path'] = $mp4->getPath();
+            $updates['mp4Filename'] = $mp4->getFilename();
+            $updates['mp4Status'] = self::STATUS_COMPLETED;
+            $updates['mp4LastError'] = null;
+        }
+
+        $this->updateRecord((int)$record['id'], $updates);
+
+        return true;
+    }
+
+    private function freshWebpOutput(array $record, Asset $asset): ?Asset
+    {
         $output = null;
 
         if (!empty($record['outputAssetId'])) {
@@ -873,14 +1100,14 @@ class Conversions extends Component
         }
 
         if (!$output instanceof Asset || strtolower($output->getExtension()) !== 'webp') {
-            return false;
+            return null;
         }
 
         if (!$this->outputIsAtLeastAsNewAsSource($output, $asset)) {
-            return false;
+            return null;
         }
 
-        $sizeCheck = $this->outputAssetIsWorthUsing($asset, $output);
+        $sizeCheck = $this->outputAssetIsWorthUsing($asset, $output, 'webp');
 
         if (!$sizeCheck['keep']) {
             $this->updateRecord((int)$record['id'], [
@@ -888,19 +1115,44 @@ class Conversions extends Component
                 'lastError' => $this->sizeSkipMessage($sizeCheck),
             ]);
 
-            return false;
+            return null;
         }
 
-        $this->updateRecord((int)$record['id'], [
-            'outputAssetId' => $output->id,
-            'outputPath' => $output->getPath(),
-            'outputFilename' => $output->getFilename(),
-            'status' => $this->freshOutputStatus($record),
-            'completedAt' => $record['completedAt'] ?? $this->now(),
-            'lastError' => null,
-        ]);
+        return $output;
+    }
 
-        return true;
+    private function freshMp4Output(array $record, Asset $asset): ?Asset
+    {
+        $output = null;
+
+        if (!empty($record['mp4AssetId'])) {
+            $output = $this->getAsset((int)$record['mp4AssetId']);
+        }
+
+        if (!$output instanceof Asset) {
+            $output = $this->findMp4AssetForSource($asset);
+        }
+
+        if (!$output instanceof Asset || strtolower($output->getExtension()) !== 'mp4') {
+            return null;
+        }
+
+        if (!$this->outputIsAtLeastAsNewAsSource($output, $asset)) {
+            return null;
+        }
+
+        $sizeCheck = $this->outputAssetIsWorthUsing($asset, $output, 'mp4');
+
+        if (!$sizeCheck['keep']) {
+            $this->updateRecord((int)$record['id'], [
+                'mp4Status' => self::STATUS_SKIPPED,
+                'mp4LastError' => $this->sizeSkipMessage($sizeCheck),
+            ]);
+
+            return null;
+        }
+
+        return $output;
     }
 
     private function freshOutputStatus(array $record): string
@@ -918,6 +1170,22 @@ class Conversions extends Component
             ->volumeId($sourceAsset->volumeId)
             ->folderId($sourceAsset->folderId)
             ->filename($this->targetFilename($sourceAsset))
+            ->status(null)
+            ->one();
+
+        return $asset instanceof Asset ? $asset : null;
+    }
+
+    private function findMp4AssetForSource(Asset $sourceAsset): ?Asset
+    {
+        if ($sourceAsset->folderId === null || $sourceAsset->volumeId === null) {
+            return null;
+        }
+
+        $asset = Asset::find()
+            ->volumeId($sourceAsset->volumeId)
+            ->folderId($sourceAsset->folderId)
+            ->filename($this->targetMp4Filename($sourceAsset))
             ->status(null)
             ->one();
 
@@ -957,11 +1225,11 @@ class Conversions extends Component
         return $asset instanceof Asset ? $asset : null;
     }
 
-    private function saveOutputAsset(Asset $sourceAsset, string $webpPath): Asset
+    private function saveOutputAsset(Asset $sourceAsset, string $outputPath, string $filename): Asset
     {
         $asset = new Asset();
-        $asset->tempFilePath = $webpPath;
-        $asset->filename = $this->targetFilename($sourceAsset);
+        $asset->tempFilePath = $outputPath;
+        $asset->filename = $filename;
         $asset->newFolderId = $sourceAsset->folderId;
         $asset->volumeId = $sourceAsset->volumeId;
         $asset->avoidFilenameConflicts = true;
@@ -1036,26 +1304,83 @@ class Conversions extends Component
         ];
     }
 
-    private function generatedWebpIsWorthSaving(string $sourcePath, string $targetPath): array
+    private function runFfmpegGifToMp4(string $sourcePath, string $targetPath): array
+    {
+        $settings = $this->settings();
+        $binary = App::parseEnv($settings->ffmpegPath) ?: 'ffmpeg';
+        $command = [
+            $binary,
+            '-y',
+            '-i',
+            $sourcePath,
+            '-an',
+            '-vf',
+            'scale=ceil(iw/2)*2:ceil(ih/2)*2',
+            '-c:v',
+            'libx264',
+            '-pix_fmt',
+            'yuv420p',
+            '-preset',
+            $settings->mp4Preset,
+            '-crf',
+            (string)$settings->mp4Crf,
+        ];
+
+        if ($settings->mp4FastStart) {
+            $command[] = '-movflags';
+            $command[] = '+faststart';
+        }
+
+        $command[] = $targetPath;
+
+        $descriptorSpec = [
+            1 => ['pipe', 'w'],
+            2 => ['pipe', 'w'],
+        ];
+
+        $process = proc_open($command, $descriptorSpec, $pipes);
+
+        if (!is_resource($process)) {
+            throw new \RuntimeException('Could not start ffmpeg.');
+        }
+
+        $stdout = stream_get_contents($pipes[1]);
+        fclose($pipes[1]);
+
+        $stderr = stream_get_contents($pipes[2]);
+        fclose($pipes[2]);
+
+        $exitCode = proc_close($process);
+
+        return [
+            'exitCode' => $exitCode,
+            'output' => trim((string)$stdout . "\n" . (string)$stderr),
+        ];
+    }
+
+    private function generatedOutputIsWorthSaving(string $sourcePath, string $targetPath, string $format): array
     {
         return $this->outputSizeDecision(
             is_file($sourcePath) ? (int)filesize($sourcePath) : 0,
-            is_file($targetPath) ? (int)filesize($targetPath) : 0
+            is_file($targetPath) ? (int)filesize($targetPath) : 0,
+            $format
         );
     }
 
-    private function outputAssetIsWorthUsing(Asset $sourceAsset, Asset $outputAsset): array
+    private function outputAssetIsWorthUsing(Asset $sourceAsset, Asset $outputAsset, string $format): array
     {
         return $this->outputSizeDecision(
             $this->assetByteSize($sourceAsset),
-            $this->assetByteSize($outputAsset)
+            $this->assetByteSize($outputAsset),
+            $format
         );
     }
 
-    private function outputSizeDecision(int $sourceSize, int $outputSize): array
+    private function outputSizeDecision(int $sourceSize, int $outputSize, string $format): array
     {
         $settings = $this->settings();
-        $minimumSavingsPercent = max(0, min(100, (int)$settings->minimumSavingsPercent));
+        $isMp4 = $format === 'mp4';
+        $minimumSavingsPercent = max(0, min(100, (int)($isMp4 ? $settings->minimumMp4SavingsPercent : $settings->minimumSavingsPercent)));
         $requiredMaxSize = $minimumSavingsPercent > 0
             ? (int)floor($sourceSize * (100 - $minimumSavingsPercent) / 100)
             : $sourceSize - 1;
@@ -1063,7 +1388,8 @@ class Conversions extends Component
         $savingsPercent = $sourceSize > 0 ? ($savingsBytes / $sourceSize) * 100 : 0.0;
 
         return [
-            'keep' => !$settings->skipLargerWebp || $sourceSize <= 0 || $outputSize <= 0 || $outputSize <= $requiredMaxSize,
+            'keep' => !($isMp4 ? $settings->skipLargerMp4 : $settings->skipLargerWebp) || $sourceSize <= 0 || $outputSize <= 0 || $outputSize <= $requiredMaxSize,
+            'format' => $format,
             'sourceSize' => $sourceSize,
             'outputSize' => $outputSize,
             'requiredMaxSize' => $requiredMaxSize,
@@ -1078,20 +1404,25 @@ class Conversions extends Component
         $source = $this->formattedBytes((int)($sizeCheck['sourceSize'] ?? 0));
         $output = $this->formattedBytes((int)($sizeCheck['outputSize'] ?? 0));
         $minimumSavingsPercent = (int)($sizeCheck['minimumSavingsPercent'] ?? 0);
+        $format = strtoupper((string)($sizeCheck['format'] ?? 'webp'));
 
         if ($minimumSavingsPercent > 0) {
             return sprintf(
-                'Generated WebP was not saved because it did not meet the %s%% minimum savings requirement (GIF: %s, WebP: %s, savings: %.1f%%).',
+                'Generated %s was not saved because it did not meet the %s%% minimum savings requirement (GIF: %s, %s: %s, savings: %.1f%%).',
+                $format,
                 $minimumSavingsPercent,
                 $source,
+                $format,
                 $output,
                 (float)($sizeCheck['savingsPercent'] ?? 0)
             );
         }
 
         return sprintf(
-            'Generated WebP was not saved because it is not smaller than the source GIF (GIF: %s, WebP: %s).',
+            'Generated %s was not saved because it is not smaller than the source GIF (GIF: %s, %s: %s).',
+            $format,
             $source,
+            $format,
             $output
         );
     }
@@ -1136,6 +1467,11 @@ class Conversions extends Component
         return $asset->getFilename(false) . '.webp';
     }
 
+    private function targetMp4Filename(Asset $asset): string
+    {
+        return $asset->getFilename(false) . '.mp4';
+    }
+
     private function tempWebpPath(Asset $asset): string
     {
         $directory = Craft::$app->getPath()->getTempPath() . DIRECTORY_SEPARATOR . 'storage-optimizer';
@@ -1143,6 +1479,18 @@ class Conversions extends Component
 
         return $directory . DIRECTORY_SEPARATOR . sprintf(
             '%s-%s.webp',
+            $asset->id,
+            bin2hex(random_bytes(8))
+        );
+    }
+
+    private function tempMp4Path(Asset $asset): string
+    {
+        $directory = Craft::$app->getPath()->getTempPath() . DIRECTORY_SEPARATOR . 'storage-optimizer';
+        FileHelper::createDirectory($directory);
+
+        return $directory . DIRECTORY_SEPARATOR . sprintf(
+            '%s-%s.mp4',
             $asset->id,
             bin2hex(random_bytes(8))
         );

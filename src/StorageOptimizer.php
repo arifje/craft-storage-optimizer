@@ -30,7 +30,7 @@ use yii\base\Event;
 class StorageOptimizer extends Plugin
 {
     public bool $hasCpSettings = true;
-    public string $schemaVersion = '1.2.0';
+    public string $schemaVersion = '1.3.0';
 
     public static ?self $plugin = null;
 
@@ -117,7 +117,7 @@ class StorageOptimizer extends Plugin
                     $this->conversions->queueAsset($asset);
                 } catch (\Throwable $e) {
                     Craft::error(
-                        sprintf('Could not enqueue GIF to WebP conversion for asset %s: %s', $asset->id, $e->getMessage()),
+                        sprintf('Could not enqueue GIF media conversion for asset %s: %s', $asset->id, $e->getMessage()),
                         __METHOD__
                     );
                 }
