@@ -1,16 +1,28 @@
 <?php
 
-namespace arifje\giftowebp\console;
+namespace arifje\craftstorageoptimizer\console;
 
-use arifje\giftowebp\GifToWebp;
-use arifje\giftowebp\services\Conversions;
+use arifje\craftstorageoptimizer\StorageOptimizer;
+use arifje\craftstorageoptimizer\services\AssetUsage;
+use arifje\craftstorageoptimizer\services\Conversions;
+use arifje\craftstorageoptimizer\services\Insights;
 use craft\console\Controller;
 
 abstract class BaseCommandController extends Controller
 {
     protected function conversions(): Conversions
     {
-        return GifToWebp::getInstance()->conversions;
+        return StorageOptimizer::getInstance()->conversions;
+    }
+
+    protected function insights(): Insights
+    {
+        return StorageOptimizer::getInstance()->insights;
+    }
+
+    protected function assetUsage(): AssetUsage
+    {
+        return StorageOptimizer::getInstance()->assetUsage;
     }
 
     protected function writeResult(array $result): void

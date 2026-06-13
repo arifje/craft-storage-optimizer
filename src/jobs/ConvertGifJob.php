@@ -1,8 +1,8 @@
 <?php
 
-namespace arifje\giftowebp\jobs;
+namespace arifje\craftstorageoptimizer\jobs;
 
-use arifje\giftowebp\GifToWebp;
+use arifje\craftstorageoptimizer\StorageOptimizer;
 use craft\queue\BaseJob;
 
 class ConvertGifJob extends BaseJob
@@ -12,7 +12,7 @@ class ConvertGifJob extends BaseJob
 
     public function execute($queue): void
     {
-        GifToWebp::getInstance()->conversions->convertRecord($this->conversionId, $this->force);
+        StorageOptimizer::getInstance()->conversions->convertRecord($this->conversionId, $this->force);
     }
 
     protected function defaultDescription(): ?string

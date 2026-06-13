@@ -1,6 +1,6 @@
 <?php
 
-namespace arifje\giftowebp\models;
+namespace arifje\craftstorageoptimizer\models;
 
 use craft\base\Model;
 

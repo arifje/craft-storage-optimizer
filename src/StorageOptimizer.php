@@ -1,26 +1,36 @@
 <?php
 
-namespace arifje\giftowebp;
+namespace arifje\craftstorageoptimizer;
 
-use arifje\giftowebp\models\Settings;
-use arifje\giftowebp\services\Conversions;
+use arifje\craftstorageoptimizer\models\Settings;
+use arifje\craftstorageoptimizer\services\AssetUsage;
+use arifje\craftstorageoptimizer\services\Conversions;
+use arifje\craftstorageoptimizer\services\Insights;
+use arifje\craftstorageoptimizer\utilities\AssetOptimizer;
+use arifje\craftstorageoptimizer\utilities\GifUsage;
+use arifje\craftstorageoptimizer\variables\StorageOptimizerVariable;
 use Craft;
 use craft\base\Element;
 use craft\base\Model;
 use craft\base\Plugin;
 use craft\console\Application as ConsoleApplication;
 use craft\elements\Asset;
+use craft\events\RegisterComponentTypesEvent;
 use craft\events\ModelEvent;
+use craft\services\Utilities;
+use craft\web\twig\variables\CraftVariable;
 use yii\base\Event;
 
 /**
  * @property Conversions $conversions
+ * @property Insights $insights
+ * @property AssetUsage $assetUsage
  * @method Settings getSettings()
  */
-class GifToWebp extends Plugin
+class StorageOptimizer extends Plugin
 {
     public bool $hasCpSettings = true;
-    public string $schemaVersion = '1.0.0';
+    public string $schemaVersion = '1.2.0';
 
     public static ?self $plugin = null;
 
@@ -32,12 +42,16 @@ class GifToWebp extends Plugin
 
         $this->setComponents([
             'conversions' => Conversions::class,
+            'insights' => Insights::class,
+            'assetUsage' => AssetUsage::class,
         ]);
 
         if (Craft::$app instanceof ConsoleApplication) {
-            $this->controllerNamespace = 'arifje\\giftowebp\\console\\controllers';
+            $this->controllerNamespace = 'arifje\\craftstorageoptimizer\\console\\controllers';
         }
 
+        $this->registerTwigVariable();
+        $this->registerUtility();
         $this->registerAssetSaveHandler();
     }
 
@@ -48,9 +62,33 @@ class GifToWebp extends Plugin
 
     protected function settingsHtml(): ?string
     {
-        return Craft::$app->getView()->renderTemplate('gif-to-webp/_settings.twig', [
+        return Craft::$app->getView()->renderTemplate('storage-optimizer/_settings.twig', [
             'settings' => $this->getSettings(),
         ]);
+    }
+
+    private function registerTwigVariable(): void
+    {
+        Event::on(
+            CraftVariable::class,
+            CraftVariable::EVENT_INIT,
+            static function(Event $event): void {
+                $event->sender->set('storageOptimizer', StorageOptimizerVariable::class);
+                $event->sender->set('gifToWebp', StorageOptimizerVariable::class);
+            }
+        );
+    }
+
+    private function registerUtility(): void
+    {
+        Event::on(
+            Utilities::class,
+            Utilities::EVENT_REGISTER_UTILITY_TYPES,
+            static function(RegisterComponentTypesEvent $event): void {
+                $event->types[] = AssetOptimizer::class;
+                $event->types[] = GifUsage::class;
+            }
+        );
     }
 
     private function registerAssetSaveHandler(): void

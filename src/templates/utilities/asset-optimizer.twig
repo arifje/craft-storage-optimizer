@@ -1,0 +1,186 @@
+{% import "_includes/forms" as forms %}
+
+<div class="readable">
+    <h2>{{ "Asset Optimizer"|t('storage-optimizer') }}</h2>
+    <p>{{ "Scans are queued and processed in batches. Ghost assets are assets with no Craft relation references; generated WebP assets are protected while their source GIF is still active."|t('storage-optimizer') }}</p>
+</div>
+
+<div class="buttons" style="margin: 24px 0;">
+    <form method="post" accept-charset="UTF-8" style="display: inline-block; margin-right: 8px;">
+        {{ csrfInput() }}
+        {{ actionInput('storage-optimizer/asset-usage/scan') }}
+        {{ redirectInput(craft.app.request.url) }}
+        {{ forms.select({
+            name: 'volumeId',
+            options: volumeOptions,
+        }) }}
+        {{ forms.text({
+            name: 'batchSize',
+            value: defaultBatchSize,
+            type: 'number',
+            min: 1,
+            max: 5000,
+            size: 5,
+        }) }}
+        <button type="submit" class="btn submit">{{ "Start asset scan"|t('storage-optimizer') }}</button>
+    </form>
+
+    {% if latestRun %}
+        <form method="post" accept-charset="UTF-8" style="display: inline-block;">
+            {{ csrfInput() }}
+            {{ actionInput('storage-optimizer/asset-usage/clear') }}
+            {{ redirectInput(craft.app.request.url) }}
+            <button type="submit" class="btn">{{ "Clear snapshots"|t('storage-optimizer') }}</button>
+        </form>
+
+        {% if latestRun.status == 'completed' and latestRun.ghostAssets > 0 and not latestRun.deleteIsActive %}
+            <form method="post" accept-charset="UTF-8" style="display: inline-block; margin-left: 8px;">
+                {{ csrfInput() }}
+                {{ actionInput('storage-optimizer/asset-usage/delete-ghosts') }}
+                {{ redirectInput(craft.app.request.url) }}
+                {{ hiddenInput('runId', latestRun.id) }}
+                {{ forms.text({
+                    name: 'batchSize',
+                    value: defaultDeleteBatchSize,
+                    type: 'number',
+                    min: 1,
+                    max: 1000,
+                    size: 5,
+                }) }}
+                <button type="submit" class="btn submit delete" data-confirm="{{ "Queue deletion of {count} ghost assets from this snapshot? Assets are re-checked before deletion and moved to Craft's trash."|t('storage-optimizer', { count: latestRun.ghostAssets }) }}">{{ "Delete ghost assets"|t('storage-optimizer') }}</button>
+            </form>
+        {% endif %}
+    {% endif %}
+</div>
+
+{% if not latestRun %}
+    <p>{{ "No asset usage scan has been run yet."|t('storage-optimizer') }}</p>
+{% else %}
+    <div class="meta read-only">
+        <div class="data">
+            <h5 class="heading">{{ "Status"|t('storage-optimizer') }}</h5>
+            <div class="value">{{ latestRun.status }}</div>
+        </div>
+        <div class="data">
+            <h5 class="heading">{{ "Volume"|t('storage-optimizer') }}</h5>
+            <div class="value">{{ latestRun.volumeId ?: 'All' }}</div>
+        </div>
+        <div class="data">
+            <h5 class="heading">{{ "Assets"|t('storage-optimizer') }}</h5>
+            <div class="value">{{ latestRun.assetCount|number }}</div>
+        </div>
+        <div class="data">
+            <h5 class="heading">{{ "Total size"|t('storage-optimizer') }}</h5>
+            <div class="value">{{ latestRun.totalBytesFormatted }}</div>
+        </div>
+        <div class="data">
+            <h5 class="heading">{{ "Average size"|t('storage-optimizer') }}</h5>
+            <div class="value">{{ latestRun.averageBytesFormatted }}</div>
+        </div>
+        <div class="data">
+            <h5 class="heading">{{ "Related assets"|t('storage-optimizer') }}</h5>
+            <div class="value">{{ latestRun.relatedAssets|number }}</div>
+        </div>
+        <div class="data">
+            <h5 class="heading">{{ "Ghost assets"|t('storage-optimizer') }}</h5>
+            <div class="value">{{ latestRun.ghostAssets|number }}</div>
+        </div>
+        <div class="data">
+            <h5 class="heading">{{ "Ghost size"|t('storage-optimizer') }}</h5>
+            <div class="value">{{ latestRun.ghostBytesFormatted }}</div>
+        </div>
+        <div class="data">
+            <h5 class="heading">{{ "Protected assets"|t('storage-optimizer') }}</h5>
+            <div class="value">{{ latestRun.protectedAssets|number }}</div>
+        </div>
+        <div class="data">
+            <h5 class="heading">{{ "Relation references"|t('storage-optimizer') }}</h5>
+            <div class="value">{{ latestRun.relationCount|number }}</div>
+        </div>
+        <div class="data">
+            <h5 class="heading">{{ "Matrix references"|t('storage-optimizer') }}</h5>
+            <div class="value">{{ latestRun.matrixRelationCount|number }}</div>
+        </div>
+        <div class="data">
+            <h5 class="heading">{{ "Largest asset"|t('storage-optimizer') }}</h5>
+            <div class="value">
+                {{ latestRun.largestBytesFormatted }}
+                {% if latestRun.largestAssetId %}<span class="light">#{{ latestRun.largestAssetId }}</span>{% endif %}
+            </div>
+        </div>
+    </div>
+
+    {% if latestRun.lastError %}
+        <p class="error">{{ latestRun.lastError }}</p>
+    {% endif %}
+
+    {% if latestRun.deleteStatus %}
+        <hr>
+
+        <h3>{{ "Ghost asset deletion"|t('storage-optimizer') }}</h3>
+
+        <div class="meta read-only">
+            <div class="data">
+                <h5 class="heading">{{ "Status"|t('storage-optimizer') }}</h5>
+                <div class="value">{{ latestRun.deleteStatus }}</div>
+            </div>
+            <div class="data">
+                <h5 class="heading">{{ "Attempted"|t('storage-optimizer') }}</h5>
+                <div class="value">{{ latestRun.deleteAttemptedAssets|number }}</div>
+            </div>
+            <div class="data">
+                <h5 class="heading">{{ "Deleted"|t('storage-optimizer') }}</h5>
+                <div class="value">{{ latestRun.deleteDeletedAssets|number }}</div>
+            </div>
+            <div class="data">
+                <h5 class="heading">{{ "Skipped"|t('storage-optimizer') }}</h5>
+                <div class="value">{{ latestRun.deleteSkippedAssets|number }}</div>
+            </div>
+            <div class="data">
+                <h5 class="heading">{{ "Failed"|t('storage-optimizer') }}</h5>
+                <div class="value">{{ latestRun.deleteFailedAssets|number }}</div>
+            </div>
+            <div class="data">
+                <h5 class="heading">{{ "Deleted bytes"|t('storage-optimizer') }}</h5>
+                <div class="value">{{ latestRun.deleteDeletedBytesFormatted }}</div>
+            </div>
+        </div>
+
+        {% if latestRun.deleteLastError %}
+            <p class="error">{{ latestRun.deleteLastError }}</p>
+        {% endif %}
+    {% endif %}
+
+    <hr>
+
+    <h3>{{ "Largest ghost assets"|t('storage-optimizer') }}</h3>
+
+    {% if topGhostAssets %}
+        <table class="data fullwidth">
+            <thead>
+                <tr>
+                    <th>{{ "Asset ID"|t('storage-optimizer') }}</th>
+                    <th>{{ "Filename"|t('storage-optimizer') }}</th>
+                    <th>{{ "Kind"|t('storage-optimizer') }}</th>
+                    <th>{{ "Ext"|t('storage-optimizer') }}</th>
+                    <th>{{ "Size"|t('storage-optimizer') }}</th>
+                    <th>{{ "Volume"|t('storage-optimizer') }}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for asset in topGhostAssets %}
+                    <tr>
+                        <td><code>{{ asset.assetId }}</code></td>
+                        <td>{{ asset.filename }}</td>
+                        <td>{{ asset.kind ?: '-' }}</td>
+                        <td>{{ asset.extension ?: '-' }}</td>
+                        <td>{{ asset.sizeFormatted }}</td>
+                        <td>{{ asset.volumeId ?: '-' }}</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p>{{ "No ghost assets were captured in the latest snapshot."|t('storage-optimizer') }}</p>
+    {% endif %}
+{% endif %}

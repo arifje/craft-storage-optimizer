@@ -1,8 +1,8 @@
 <?php
 
-namespace arifje\giftowebp\console\controllers;
+namespace arifje\craftstorageoptimizer\console\controllers;
 
-use arifje\giftowebp\console\BaseCommandController;
+use arifje\craftstorageoptimizer\console\BaseCommandController;
 use yii\console\ExitCode;
 
 class ConvertController extends BaseCommandController

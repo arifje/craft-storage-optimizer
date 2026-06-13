@@ -1,10 +1,10 @@
 <?php
 
-namespace arifje\giftowebp\services;
+namespace arifje\craftstorageoptimizer\services;
 
-use arifje\giftowebp\GifToWebp;
-use arifje\giftowebp\jobs\ConvertGifJob;
-use arifje\giftowebp\models\Settings;
+use arifje\craftstorageoptimizer\StorageOptimizer;
+use arifje\craftstorageoptimizer\jobs\ConvertGifJob;
+use arifje\craftstorageoptimizer\models\Settings;
 use Craft;
 use craft\base\Component;
 use craft\elements\Asset;
@@ -17,7 +17,7 @@ use yii\db\Query;
 
 class Conversions extends Component
 {
-    public const TABLE = '{{%gif_to_webp_conversions}}';
+    public const TABLE = '{{%storage_optimizer_gif_conversions}}';
 
     public const STATUS_PENDING = 'pending';
     public const STATUS_QUEUED = 'queued';
@@ -28,6 +28,7 @@ class Conversions extends Component
     public const STATUS_MISSING = 'missing';
 
     private bool $savingGeneratedAsset = false;
+    private array $animationCache = [];
 
     public function isSavingGeneratedAsset(): bool
     {
@@ -45,6 +46,97 @@ class Conversions extends Component
         }
 
         return strtolower((string)$asset->getExtension()) === 'gif';
+    }
+
+    public function getWebpAsset(Asset $asset): ?Asset
+    {
+        if ($asset->id === null) {
+            return null;
+        }
+
+        if (strtolower((string)$asset->getExtension()) === 'webp') {
+            return $asset;
+        }
+
+        if (!$this->isGifAsset($asset)) {
+            return null;
+        }
+
+        $record = $this->getRecordByAssetId((int)$asset->id);
+
+        if ($record !== null && $this->hasFreshOutput($record, $asset)) {
+            $record = $this->getRecordByAssetId((int)$asset->id);
+
+            if (!empty($record['outputAssetId'])) {
+                return $this->getAsset((int)$record['outputAssetId']);
+            }
+        }
+
+        $output = $this->findOutputAssetForSource($asset);
+
+        if ($output instanceof Asset && $this->outputIsAtLeastAsNewAsSource($output, $asset)) {
+            return $output;
+        }
+
+        return null;
+    }
+
+    public function getSourceGifAsset(Asset $asset): ?Asset
+    {
+        if ($asset->id === null) {
+            return null;
+        }
+
+        if ($this->isGifAsset($asset)) {
+            return $asset;
+        }
+
+        if (strtolower((string)$asset->getExtension()) !== 'webp') {
+            return null;
+        }
+
+        $record = $this->getRecordByOutputAssetId((int)$asset->id);
+
+        if ($record === null) {
+            return null;
+        }
+
+        $source = $this->getAsset((int)$record['assetId']);
+
+        return $source instanceof Asset && $this->isGifAsset($source) ? $source : null;
+    }
+
+    public function isGifOrConvertedWebp(Asset $asset): bool
+    {
+        if ($this->isGifAsset($asset)) {
+            return true;
+        }
+
+        return strtolower((string)$asset->getExtension()) === 'webp'
+            && $this->getSourceGifAsset($asset) instanceof Asset;
+    }
+
+    public function isAnimatedImage(Asset $asset): bool
+    {
+        return $this->isAnimatedGif($asset) || $this->isAnimatedWebp($asset);
+    }
+
+    public function isAnimatedGif(Asset $asset): bool
+    {
+        if (!$this->isGifAsset($asset)) {
+            return false;
+        }
+
+        return $this->inspectAssetAnimation($asset, 'gif', fn(string $path): bool => $this->gifFileHasAnimation($path));
+    }
+
+    public function isAnimatedWebp(Asset $asset): bool
+    {
+        if (strtolower((string)$asset->getExtension()) !== 'webp') {
+            return false;
+        }
+
+        return $this->inspectAssetAnimation($asset, 'webp', fn(string $path): bool => $this->webpFileHasAnimation($path));
     }
 
     public function scan(?int $limit = null, ?int $volumeId = null, bool $queue = false, bool $force = false): array
@@ -457,6 +549,24 @@ class Conversions extends Component
         return $record ?: null;
     }
 
+    public function getRecordForAsset(Asset $asset): ?array
+    {
+        if ($asset->id === null) {
+            return null;
+        }
+
+        $record = (new Query())
+            ->from(self::TABLE)
+            ->where([
+                'or',
+                ['assetId' => $asset->id],
+                ['outputAssetId' => $asset->id],
+            ])
+            ->one();
+
+        return $record ?: null;
+    }
+
     private function gifAssetQuery(?int $limit = null, ?int $volumeId = null)
     {
         $query = Asset::find()
@@ -537,6 +647,16 @@ class Conversions extends Component
         $record = (new Query())
             ->from(self::TABLE)
             ->where(['assetId' => $assetId])
+            ->one();
+
+        return $record ?: null;
+    }
+
+    private function getRecordByOutputAssetId(int $assetId): ?array
+    {
+        $record = (new Query())
+            ->from(self::TABLE)
+            ->where(['outputAssetId' => $assetId])
             ->one();
 
         return $record ?: null;
@@ -728,7 +848,7 @@ class Conversions extends Component
 
     private function tempWebpPath(Asset $asset): string
     {
-        $directory = Craft::$app->getPath()->getTempPath() . DIRECTORY_SEPARATOR . 'gif-to-webp';
+        $directory = Craft::$app->getPath()->getTempPath() . DIRECTORY_SEPARATOR . 'storage-optimizer';
         FileHelper::createDirectory($directory);
 
         return $directory . DIRECTORY_SEPARATOR . sprintf(
@@ -743,6 +863,212 @@ class Conversions extends Component
         if ($path !== null && is_file($path)) {
             FileHelper::unlink($path);
         }
+    }
+
+    private function inspectAssetAnimation(Asset $asset, string $type, callable $inspector): bool
+    {
+        $key = $type . ':' . $this->assetCacheKey($asset);
+
+        if (array_key_exists($key, $this->animationCache)) {
+            return $this->animationCache[$key];
+        }
+
+        $path = null;
+
+        try {
+            $path = $asset->getCopyOfFile();
+            $this->animationCache[$key] = $path !== null && $inspector($path);
+        } catch (\Throwable $e) {
+            Craft::warning(
+                sprintf('Could not inspect animation state for asset %s: %s', $asset->id, $e->getMessage()),
+                __METHOD__
+            );
+
+            $this->animationCache[$key] = false;
+        } finally {
+            $this->removeTempFile($path);
+        }
+
+        return $this->animationCache[$key];
+    }
+
+    private function webpFileHasAnimation(string $path): bool
+    {
+        $handle = fopen($path, 'rb');
+
+        if ($handle === false) {
+            return false;
+        }
+
+        try {
+            $header = fread($handle, 12);
+
+            if (!is_string($header) || strlen($header) !== 12 || substr($header, 0, 4) !== 'RIFF' || substr($header, 8, 4) !== 'WEBP') {
+                return false;
+            }
+
+            while (!feof($handle)) {
+                $chunkHeader = fread($handle, 8);
+
+                if (!is_string($chunkHeader) || strlen($chunkHeader) < 8) {
+                    return false;
+                }
+
+                $chunkType = substr($chunkHeader, 0, 4);
+                $chunkSize = unpack('Vsize', substr($chunkHeader, 4, 4))['size'];
+
+                if ($chunkType === 'ANIM' || $chunkType === 'ANMF') {
+                    return true;
+                }
+
+                if ($chunkType === 'VP8X') {
+                    $flags = fread($handle, 1);
+
+                    if (is_string($flags) && strlen($flags) === 1 && (ord($flags) & 0x02) === 0x02) {
+                        return true;
+                    }
+
+                    $remaining = max(0, $chunkSize - 1);
+                    if ($remaining > 0) {
+                        fseek($handle, $remaining, SEEK_CUR);
+                    }
+                } else {
+                    fseek($handle, $chunkSize, SEEK_CUR);
+                }
+
+                if ($chunkSize % 2 === 1) {
+                    fseek($handle, 1, SEEK_CUR);
+                }
+            }
+        } finally {
+            fclose($handle);
+        }
+
+        return false;
+    }
+
+    private function gifFileHasAnimation(string $path): bool
+    {
+        $handle = fopen($path, 'rb');
+
+        if ($handle === false) {
+            return false;
+        }
+
+        try {
+            $header = fread($handle, 13);
+
+            if (!is_string($header) || strlen($header) !== 13 || !in_array(substr($header, 0, 6), ['GIF87a', 'GIF89a'], true)) {
+                return false;
+            }
+
+            $packed = ord($header[10]);
+
+            if (($packed & 0x80) === 0x80) {
+                $globalColorTableSize = 3 * (2 ** (($packed & 0x07) + 1));
+                fseek($handle, $globalColorTableSize, SEEK_CUR);
+            }
+
+            $frames = 0;
+
+            while (!feof($handle)) {
+                $block = fread($handle, 1);
+
+                if (!is_string($block) || $block === '') {
+                    return false;
+                }
+
+                $blockType = ord($block);
+
+                if ($blockType === 0x2C) {
+                    $frames++;
+
+                    if ($frames > 1) {
+                        return true;
+                    }
+
+                    $descriptor = fread($handle, 9);
+
+                    if (!is_string($descriptor) || strlen($descriptor) !== 9) {
+                        return false;
+                    }
+
+                    $imagePacked = ord($descriptor[8]);
+
+                    if (($imagePacked & 0x80) === 0x80) {
+                        $localColorTableSize = 3 * (2 ** (($imagePacked & 0x07) + 1));
+                        fseek($handle, $localColorTableSize, SEEK_CUR);
+                    }
+
+                    fseek($handle, 1, SEEK_CUR);
+
+                    if (!$this->skipGifSubBlocks($handle)) {
+                        return false;
+                    }
+
+                    continue;
+                }
+
+                if ($blockType === 0x21) {
+                    fseek($handle, 1, SEEK_CUR);
+
+                    if (!$this->skipGifSubBlocks($handle)) {
+                        return false;
+                    }
+
+                    continue;
+                }
+
+                if ($blockType === 0x3B) {
+                    return false;
+                }
+
+                return false;
+            }
+        } finally {
+            fclose($handle);
+        }
+
+        return false;
+    }
+
+    /**
+     * @param resource $handle
+     */
+    private function skipGifSubBlocks($handle): bool
+    {
+        while (!feof($handle)) {
+            $sizeByte = fread($handle, 1);
+
+            if (!is_string($sizeByte) || $sizeByte === '') {
+                return false;
+            }
+
+            $size = ord($sizeByte);
+
+            if ($size === 0) {
+                return true;
+            }
+
+            fseek($handle, $size, SEEK_CUR);
+        }
+
+        return false;
+    }
+
+    private function assetCacheKey(Asset $asset): string
+    {
+        $modified = $asset->dateModified ?? null;
+
+        if ($modified instanceof \DateTimeInterface) {
+            $modified = $modified->getTimestamp();
+        }
+
+        return implode(':', [
+            $asset->id ?? 'new',
+            $asset->size ?? 0,
+            (string)$modified,
+        ]);
     }
 
     private function sourceSignature(Asset $asset): string
@@ -781,6 +1107,6 @@ class Conversions extends Component
 
     private function settings(): Settings
     {
-        return GifToWebp::getInstance()->getSettings();
+        return StorageOptimizer::getInstance()->getSettings();
     }
 }
