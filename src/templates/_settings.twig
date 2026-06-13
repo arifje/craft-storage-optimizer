@@ -10,6 +10,15 @@
     errors: settings.getErrors('convertOnAssetSave')
 }) }}
 
+{{ forms.lightswitchField({
+    label: "Replace GIF references with WebP"|t('storage-optimizer'),
+    instructions: "When enabled, completed conversions update Craft asset-field relations, including Matrix-owned fields, so entries use the generated WebP asset. The original GIF asset remains available for conversion history and cleanup."|t('storage-optimizer'),
+    id: 'replaceAssetReferences',
+    name: 'replaceAssetReferences',
+    on: settings.replaceAssetReferences,
+    errors: settings.getErrors('replaceAssetReferences')
+}) }}
+
 {{ forms.textField({
     label: "Queue delay"|t('storage-optimizer'),
     instructions: "Seconds to delay conversion jobs. Defaults to 300 so GIF-to-MP4 processing can run first."|t('storage-optimizer'),

@@ -7,6 +7,7 @@ use arifje\craftstorageoptimizer\jobs\ConvertGifJob;
 use arifje\craftstorageoptimizer\models\Settings;
 use Craft;
 use craft\base\Component;
+use craft\db\Table;
 use craft\elements\Asset;
 use craft\helpers\App;
 use craft\helpers\ElementHelper;
@@ -196,11 +197,16 @@ class Conversions extends Component
         }
 
         if (!$force && $this->hasFreshOutput($record, $asset)) {
+            $record = $this->getRecordById((int)$record['id']) ?? $record;
+            $outputAsset = !empty($record['outputAssetId']) ? $this->getAsset((int)$record['outputAssetId']) : $this->findOutputAssetForSource($asset);
+            $replacement = $this->replaceAssetReferencesIfEnabled($asset, $outputAsset);
+
             return [
                 'queued' => false,
                 'reason' => 'already-converted',
                 'record' => $record,
                 'jobId' => null,
+                'referencesReplaced' => $replacement['replaced'],
             ];
         }
 
@@ -239,6 +245,7 @@ class Conversions extends Component
             'found' => 0,
             'queued' => 0,
             'skipped' => 0,
+            'referencesReplaced' => 0,
             'errors' => 0,
         ];
 
@@ -252,6 +259,7 @@ class Conversions extends Component
             try {
                 $queueResult = $this->queueAsset($asset, $force, $delay);
                 $queueResult['queued'] ? $result['queued']++ : $result['skipped']++;
+                $result['referencesReplaced'] += (int)($queueResult['referencesReplaced'] ?? 0);
             } catch (\Throwable $e) {
                 $result['errors']++;
                 Craft::error(sprintf('GIF to WebP queue failed for asset %s: %s', $asset->id, $e->getMessage()), __METHOD__);
@@ -285,6 +293,7 @@ class Conversions extends Component
             'processed' => 0,
             'converted' => 0,
             'skipped' => 0,
+            'referencesReplaced' => 0,
             'failed' => 0,
         ];
 
@@ -308,6 +317,8 @@ class Conversions extends Component
             } else {
                 $result['skipped']++;
             }
+
+            $result['referencesReplaced'] += (int)($conversion['referencesReplaced'] ?? 0);
         }
 
         return $result;
@@ -342,6 +353,10 @@ class Conversions extends Component
         $record = $this->prepareRecord($asset, false);
 
         if (!$force && $this->hasFreshOutput($record, $asset)) {
+            $record = $this->getRecordById((int)$record['id']) ?? $record;
+            $outputAsset = !empty($record['outputAssetId']) ? $this->getAsset((int)$record['outputAssetId']) : $this->findOutputAssetForSource($asset);
+            $replacement = $this->replaceAssetReferencesIfEnabled($asset, $outputAsset);
+
             $this->updateRecord((int)$record['id'], [
                 'status' => $this->freshOutputStatus($record),
                 'completedAt' => $record['completedAt'] ?? $this->now(),
@@ -351,8 +366,9 @@ class Conversions extends Component
             return [
                 'converted' => false,
                 'status' => self::STATUS_COMPLETED,
-                'message' => 'Fresh WebP output already exists.',
+                'message' => $this->conversionMessage('Fresh WebP output already exists.', $replacement),
                 'record' => $this->getRecordById((int)$record['id']),
+                'referencesReplaced' => $replacement['replaced'],
             ];
         }
 
@@ -397,11 +413,14 @@ class Conversions extends Component
                 'lastError' => null,
             ]);
 
+            $replacement = $this->replaceAssetReferencesIfEnabled($asset, $outputAsset);
+
             return [
                 'converted' => true,
                 'status' => self::STATUS_COMPLETED,
-                'message' => sprintf('Converted asset %s to %s.', $asset->id, $outputAsset->filename),
+                'message' => $this->conversionMessage(sprintf('Converted asset %s to %s.', $asset->id, $outputAsset->filename), $replacement),
                 'record' => $this->getRecordById((int)$record['id']),
+                'referencesReplaced' => $replacement['replaced'],
             ];
         } catch (\Throwable $e) {
             $this->markFailed((int)$record['id'], self::STATUS_FAILED, $e->getMessage());
@@ -426,6 +445,7 @@ class Conversions extends Component
             'checked' => 0,
             'verified' => 0,
             'pending' => 0,
+            'referencesReplaced' => 0,
             'missing' => 0,
         ];
 
@@ -462,6 +482,9 @@ class Conversions extends Component
                 $result['pending']++;
                 continue;
             }
+
+            $replacement = $this->replaceAssetReferencesIfEnabled($source, $output);
+            $result['referencesReplaced'] += $replacement['replaced'];
 
             $this->updateRecord((int)$record['id'], [
                 'status' => self::STATUS_VERIFIED,
@@ -566,6 +589,123 @@ class Conversions extends Component
             ->one();
 
         return $record ?: null;
+    }
+
+    public function replaceAssetReferences(Asset $sourceAsset, Asset $outputAsset): array
+    {
+        $summary = $this->emptyReferenceReplacementSummary(true);
+        $sourceAssetId = (int)($sourceAsset->id ?? 0);
+        $outputAssetId = (int)($outputAsset->id ?? 0);
+
+        if ($sourceAssetId <= 0 || $outputAssetId <= 0 || $sourceAssetId === $outputAssetId) {
+            return $summary;
+        }
+
+        $db = Craft::$app->getDb();
+        $relations = (new Query())
+            ->select(['id', 'fieldId', 'sourceId', 'sourceSiteId'])
+            ->from(Table::RELATIONS)
+            ->where(['targetId' => $sourceAssetId])
+            ->all($db);
+
+        $summary['relations'] = count($relations);
+
+        if (empty($relations)) {
+            return $summary;
+        }
+
+        $transaction = $db->beginTransaction();
+
+        try {
+            foreach ($relations as $relation) {
+                $condition = [
+                    'fieldId' => (int)$relation['fieldId'],
+                    'sourceId' => (int)$relation['sourceId'],
+                    'sourceSiteId' => $relation['sourceSiteId'] !== null ? (int)$relation['sourceSiteId'] : null,
+                    'targetId' => $outputAssetId,
+                ];
+                $alreadyRelated = (new Query())
+                    ->from(Table::RELATIONS)
+                    ->where($condition)
+                    ->exists($db);
+
+                if ($alreadyRelated) {
+                    $db->createCommand()
+                        ->delete(Table::RELATIONS, ['id' => (int)$relation['id']])
+                        ->execute();
+                    $summary['deletedDuplicates']++;
+                    continue;
+                }
+
+                $db->createCommand()
+                    ->update(Table::RELATIONS, [
+                        'targetId' => $outputAssetId,
+                        'dateUpdated' => $this->now(),
+                    ], ['id' => (int)$relation['id']])
+                    ->execute();
+                $summary['updated']++;
+            }
+
+            $transaction->commit();
+        } catch (\Throwable $e) {
+            $transaction->rollBack();
+            throw $e;
+        }
+
+        $summary['replaced'] = $summary['updated'] + $summary['deletedDuplicates'];
+
+        if ($summary['replaced'] > 0) {
+            Craft::info(
+                sprintf(
+                    'Replaced %s GIF asset relation(s) from asset %s to WebP asset %s.',
+                    $summary['replaced'],
+                    $sourceAssetId,
+                    $outputAssetId
+                ),
+                __METHOD__
+            );
+        }
+
+        return $summary;
+    }
+
+    private function replaceAssetReferencesIfEnabled(Asset $sourceAsset, ?Asset $outputAsset): array
+    {
+        $enabled = (bool)$this->settings()->replaceAssetReferences;
+        $summary = $this->emptyReferenceReplacementSummary($enabled);
+
+        if (!$enabled || !$outputAsset instanceof Asset) {
+            return $summary;
+        }
+
+        return $this->replaceAssetReferences($sourceAsset, $outputAsset);
+    }
+
+    private function emptyReferenceReplacementSummary(bool $enabled): array
+    {
+        return [
+            'enabled' => $enabled,
+            'relations' => 0,
+            'updated' => 0,
+            'deletedDuplicates' => 0,
+            'replaced' => 0,
+        ];
+    }
+
+    private function conversionMessage(string $message, array $replacement): string
+    {
+        $replaced = (int)($replacement['replaced'] ?? 0);
+
+        if ($replaced <= 0) {
+            return $message;
+        }
+
+        return sprintf(
+            '%s Replaced %s GIF asset reference%s with the generated WebP.',
+            $message,
+            $replaced,
+            $replaced === 1 ? '' : 's'
+        );
     }
 
     private function gifAssetQuery(?int $limit = null, ?int $volumeId = null)

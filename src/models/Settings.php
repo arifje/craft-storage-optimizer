@@ -7,6 +7,7 @@ use craft\base\Model;
 class Settings extends Model
 {
     public bool $convertOnAssetSave = true;
+    public bool $replaceAssetReferences = true;
     public int $queueDelay = 300;
     public string $gif2webpPath = 'gif2webp';
     public int $quality = 80;
@@ -16,7 +17,7 @@ class Settings extends Model
     public function rules(): array
     {
         return [
-            [['convertOnAssetSave', 'multiThreaded'], 'boolean'],
+            [['convertOnAssetSave', 'replaceAssetReferences', 'multiThreaded'], 'boolean'],
             [['queueDelay', 'quality', 'method'], 'integer'],
             [['queueDelay'], 'integer', 'min' => 0],
             [['quality'], 'integer', 'min' => 0, 'max' => 100],

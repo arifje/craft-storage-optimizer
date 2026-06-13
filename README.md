@@ -2,7 +2,7 @@
 
 Craft CMS plugin for optimizing asset storage with GIF-to-WebP conversion, usage insights, and safe cleanup for ghost assets.
 
-This plugin is intentionally separate from any GIF-to-MP4 workflow. GIF assets remain the source of truth; this plugin creates WebP sibling assets and tracks conversion state in its own database table.
+This plugin is intentionally separate from any GIF-to-MP4 workflow. Source GIF assets remain available for conversion history and cleanup; this plugin creates WebP sibling assets, can update Craft asset-field references to the generated WebP, and tracks conversion state in its own database table.
 
 The Composer package is `arifje/craft-storage-optimizer` and the Craft plugin handle is `storage-optimizer`.
 
@@ -22,11 +22,12 @@ php craft plugin/install storage-optimizer
 ## Settings
 
 - **Convert GIFs on asset save**: enqueues a conversion whenever a GIF asset is saved.
+- **Replace GIF references with WebP**: after a conversion completes, updates Craft asset-field relations, including Matrix-owned fields, so entries use the generated WebP asset while the original GIF remains in the volume.
 - **Queue delay**: defaults to `300` seconds so other plugins, such as a separate GIF-to-MP4 plugin, can process the original GIF first.
 - **gif2webp path**: defaults to `gif2webp`; environment variables are supported.
 - **Quality**, **method**, and **multithreading** options are passed to `gif2webp`.
 
-Asset-save conversion never runs inline. It only creates or updates a conversion state row and pushes a queue job.
+Asset-save conversion never runs inline. It only creates or updates a conversion state row and pushes a queue job. If reference replacement is enabled, relation updates happen inside that queue job after the WebP asset has been saved.
 
 ## Asset Optimizer
 
@@ -108,6 +109,8 @@ php craft storage-optimizer/insights/delete-unused
 ```
 
 `archive` and `delete` are command placeholders for the later retention/destructive workflow.
+
+When **Replace GIF references with WebP** is enabled, `verify` also repairs existing completed conversions by swapping any remaining GIF asset-field references to the generated WebP.
 
 ## Twig Helpers
 
