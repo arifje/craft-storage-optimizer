@@ -217,6 +217,7 @@ class Conversions extends Component
 
         $jobId = $this->pushJob(new ConvertGifJob([
             'conversionId' => (int)$record['id'],
+            'assetId' => (int)$asset->id,
             'force' => $force,
         ]), $delay ?? $this->settings()->queueDelay);
 
