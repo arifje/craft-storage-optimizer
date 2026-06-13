@@ -861,20 +861,26 @@ class AssetUsage extends Component
     private function decorateAssetRows(array $rows): array
     {
         $assetIds = array_map(static fn(array $row): int => (int)$row['assetId'], $rows);
+        $assets = $this->assetsForRows($assetIds);
         $ownerIdsByAsset = $this->ownerIdsForAssets($assetIds);
         $owners = $this->ownerEntries(array_values($ownerIdsByAsset));
 
-        return array_map(function(array $row) use ($ownerIdsByAsset, $owners): array {
-            return $this->decorateAssetRow($row, $ownerIdsByAsset, $owners);
+        return array_map(function(array $row) use ($assets, $ownerIdsByAsset, $owners): array {
+            return $this->decorateAssetRow($row, $assets, $ownerIdsByAsset, $owners);
         }, $rows);
     }
 
-    private function decorateAssetRow(array $row, array $ownerIdsByAsset = [], array $owners = []): array
+    private function decorateAssetRow(array $row, array $assets = [], array $ownerIdsByAsset = [], array $owners = []): array
     {
         $row['sizeFormatted'] = $this->formattedBytes((int)($row['size'] ?? 0));
         $row['volumeName'] = $row['volumeName'] ?: $this->volumeName((int)($row['volumeId'] ?? 0));
         $row['assetDateCreatedFormatted'] = $this->formatDateTime($row['assetDateCreated'] ?? null);
         $row['assetDateUpdatedFormatted'] = $this->formatDateTime($row['assetDateUpdated'] ?? null);
+
+        $asset = $assets[(int)$row['assetId']] ?? null;
+
+        $row['assetUrl'] = $asset instanceof Asset ? $this->assetUrl($asset) : null;
+        $row['assetCpEditUrl'] = $asset instanceof Asset ? $asset->getCpEditUrl() : null;
 
         $ownerId = $ownerIdsByAsset[(int)$row['assetId']] ?? null;
         $owner = $ownerId !== null ? ($owners[$ownerId] ?? null) : null;
@@ -884,6 +890,40 @@ class AssetUsage extends Component
         $row['ownerUrl'] = $owner['url'] ?? null;
 
         return $row;
+    }
+
+    private function assetsForRows(array $assetIds): array
+    {
+        $assetIds = array_values(array_filter(array_unique(array_map('intval', $assetIds))));
+
+        if (empty($assetIds)) {
+            return [];
+        }
+
+        $assets = Asset::find()
+            ->id($assetIds)
+            ->site('*')
+            ->status(null)
+            ->trashed(null)
+            ->all();
+        $indexed = [];
+
+        foreach ($assets as $asset) {
+            if (!isset($indexed[(int)$asset->id])) {
+                $indexed[(int)$asset->id] = $asset;
+            }
+        }
+
+        return $indexed;
+    }
+
+    private function assetUrl(Asset $asset): ?string
+    {
+        try {
+            return $asset->getUrl();
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     private function emptyReport(int $page, int $perPage, string $sort, string $direction): array

@@ -380,8 +380,20 @@
                         {% for asset in topGhostAssets %}
                             {% set assetVolume = asset.volumeName ?: (asset.volumeId ? '#' ~ asset.volumeId : '-') %}
                             <tr>
-                                <td><code>{{ asset.assetId }}</code></td>
-                                <td class="so-filename">{{ asset.filename }}</td>
+                                <td>
+                                    {% if asset.assetCpEditUrl %}
+                                        <a href="{{ asset.assetCpEditUrl }}"><code>{{ asset.assetId }}</code></a>
+                                    {% else %}
+                                        <code>{{ asset.assetId }}</code>
+                                    {% endif %}
+                                </td>
+                                <td class="so-filename">
+                                    {% if asset.assetUrl %}
+                                        <a href="{{ asset.assetUrl }}" target="_blank" rel="noopener">{{ asset.filename }}</a>
+                                    {% else %}
+                                        {{ asset.filename }}
+                                    {% endif %}
+                                </td>
                                 <td>{{ asset.kind ?: '-' }}</td>
                                 <td>{{ asset.extension ?: '-' }}</td>
                                 <td class="so-number">{{ asset.sizeFormatted }}</td>
