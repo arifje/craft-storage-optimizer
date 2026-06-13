@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Craft Storage Optimizer icon</title>
+  <desc id="desc">A storage stack and image frame with optimization arrows and cleanup sparkle.</desc>
+  <defs>
+    <linearGradient id="background" x1="64" y1="56" x2="448" y2="456" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F6FBF9"/>
+      <stop offset="1" stop-color="#E8F2EF"/>
+    </linearGradient>
+    <linearGradient id="teal" x1="134" y1="144" x2="398" y2="378" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#32B8A2"/>
+      <stop offset="1" stop-color="#117C83"/>
+    </linearGradient>
+    <linearGradient id="coral" x1="272" y1="118" x2="410" y2="266" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FF8B5E"/>
+      <stop offset="1" stop-color="#E44F46"/>
+    </linearGradient>
+    <filter id="shadow" x="42" y="42" width="428" height="428" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#163D45" flood-opacity=".16"/>
+    </filter>
+  </defs>
+
+  <rect width="512" height="512" rx="112" fill="url(#background)"/>
+  <path d="M120 356c23 35 70 61 129 64 82 4 151-35 165-94 9-38-3-78-33-111-34-38-92-59-152-51-82 10-141 74-130 144 2 17 10 33 21 48Z" fill="#D8EBE7"/>
+
+  <g filter="url(#shadow)">
+    <rect x="142" y="136" width="196" height="214" rx="32" fill="#FFFFFF"/>
+    <rect x="165" y="165" width="150" height="118" rx="22" fill="#DDF5F0"/>
+    <path d="M184 263 224 218l31 31 18-20 33 34v11H184Z" fill="url(#teal)"/>
+    <circle cx="279" cy="198" r="18" fill="#FFD166"/>
+
+    <path d="M158 324h164c16 0 29 13 29 29s-13 29-29 29H158c-16 0-29-13-29-29s13-29 29-29Z" fill="#0F3B46"/>
+    <path d="M164 347h122c6 0 11 5 11 11s-5 11-11 11H164c-6 0-11-5-11-11s5-11 11-11Z" fill="#5DDFCB"/>
+    <circle cx="322" cy="358" r="11" fill="#FFD166"/>
+
+    <path d="M171 373h138c14 0 26 12 26 26s-12 26-26 26H171c-14 0-26-12-26-26s12-26 26-26Z" fill="#176471"/>
+    <path d="M179 394h88c5 0 9 4 9 9s-4 9-9 9h-88c-5 0-9-4-9-9s4-9 9-9Z" fill="#BCEFE7"/>
+  </g>
+
+  <g>
+    <path d="M326 104c50 0 91 41 91 91s-41 91-91 91c-23 0-44-9-60-23" fill="none" stroke="url(#coral)" stroke-width="24" stroke-linecap="round"/>
+    <path d="M262 263v-58h58" fill="none" stroke="#E44F46" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M386 158c-10-16-28-27-49-27-17 0-33 7-43 19" fill="none" stroke="#FFFFFF" stroke-width="13" stroke-linecap="round" opacity=".88"/>
+  </g>
+
+  <g>
+    <path d="M402 318c11 0 20 9 20 20 0-11 9-20 20-20-11 0-20-9-20-20 0 11-9 20-20 20Z" fill="#FFD166"/>
+    <path d="M85 190c9 0 17 8 17 17 0-9 8-17 17-17-9 0-17-8-17-17 0 9-8 17-17 17Z" fill="#FF8B5E"/>
+    <circle cx="402" cy="379" r="9" fill="#32B8A2"/>
+    <circle cx="113" cy="280" r="8" fill="#117C83"/>
+  </g>
+</svg>
