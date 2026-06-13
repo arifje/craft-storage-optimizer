@@ -25,6 +25,7 @@ class Conversions extends Component
     public const STATUS_PROCESSING = 'processing';
     public const STATUS_COMPLETED = 'completed';
     public const STATUS_VERIFIED = 'verified';
+    public const STATUS_SKIPPED = 'skipped';
     public const STATUS_FAILED = 'failed';
     public const STATUS_MISSING = 'missing';
 
@@ -75,7 +76,7 @@ class Conversions extends Component
 
         $output = $this->findOutputAssetForSource($asset);
 
-        if ($output instanceof Asset && $this->outputIsAtLeastAsNewAsSource($output, $asset)) {
+        if ($output instanceof Asset && $this->outputIsAtLeastAsNewAsSource($output, $asset) && $this->outputAssetIsWorthUsing($asset, $output)['keep']) {
             return $output;
         }
 
@@ -193,6 +194,15 @@ class Conversions extends Component
                 'reason' => 'already-active',
                 'record' => $record,
                 'jobId' => $record['lastJobId'] ?? null,
+            ];
+        }
+
+        if (!$force && ($record['status'] ?? null) === self::STATUS_SKIPPED && $this->settings()->skipLargerWebp) {
+            return [
+                'queued' => false,
+                'reason' => 'previously-skipped',
+                'record' => $record,
+                'jobId' => null,
             ];
         }
 
@@ -398,6 +408,27 @@ class Conversions extends Component
 
             if (!is_file($targetTemp) || filesize($targetTemp) === 0) {
                 throw new \RuntimeException('gif2webp did not produce a WebP file.');
+            }
+
+            $sizeCheck = $this->generatedWebpIsWorthSaving($sourceTemp, $targetTemp);
+
+            if (!$sizeCheck['keep']) {
+                $message = $this->sizeSkipMessage($sizeCheck);
+
+                $this->updateRecord((int)$record['id'], [
+                    'status' => self::STATUS_SKIPPED,
+                    'completedAt' => $this->now(),
+                    'verifiedAt' => null,
+                    'lastError' => $message,
+                ]);
+
+                return [
+                    'converted' => false,
+                    'status' => self::STATUS_SKIPPED,
+                    'message' => $message,
+                    'record' => $this->getRecordById((int)$record['id']),
+                    'referencesReplaced' => 0,
+                ];
             }
 
             $outputAsset = $this->saveOutputAsset($asset, $targetTemp);
@@ -849,6 +880,17 @@ class Conversions extends Component
             return false;
         }
 
+        $sizeCheck = $this->outputAssetIsWorthUsing($asset, $output);
+
+        if (!$sizeCheck['keep']) {
+            $this->updateRecord((int)$record['id'], [
+                'status' => self::STATUS_SKIPPED,
+                'lastError' => $this->sizeSkipMessage($sizeCheck),
+            ]);
+
+            return false;
+        }
+
         $this->updateRecord((int)$record['id'], [
             'outputAssetId' => $output->id,
             'outputPath' => $output->getPath(),
@@ -941,13 +983,25 @@ class Conversions extends Component
     {
         $settings = $this->settings();
         $binary = App::parseEnv($settings->gif2webpPath) ?: 'gif2webp';
+        $compressionMode = in_array($settings->compressionMode, ['lossless', 'lossy', 'mixed'], true) ? $settings->compressionMode : 'lossy';
         $command = [
             $binary,
-            '-q',
-            (string)$settings->quality,
-            '-m',
-            (string)$settings->method,
         ];
+
+        if ($compressionMode === 'lossy') {
+            $command[] = '-lossy';
+        } elseif ($compressionMode === 'mixed') {
+            $command[] = '-mixed';
+        }
+
+        $command[] = '-q';
+        $command[] = (string)$settings->quality;
+        $command[] = '-m';
+        $command[] = (string)$settings->method;
+
+        if ($settings->minimizeOutputSize) {
+            $command[] = '-min_size';
+        }
 
         if ($settings->multiThreaded) {
             $command[] = '-mt';
@@ -980,6 +1034,101 @@ class Conversions extends Component
             'exitCode' => $exitCode,
             'output' => trim((string)$stdout . "\n" . (string)$stderr),
         ];
+    }
+
+    private function generatedWebpIsWorthSaving(string $sourcePath, string $targetPath): array
+    {
+        return $this->outputSizeDecision(
+            is_file($sourcePath) ? (int)filesize($sourcePath) : 0,
+            is_file($targetPath) ? (int)filesize($targetPath) : 0
+        );
+    }
+
+    private function outputAssetIsWorthUsing(Asset $sourceAsset, Asset $outputAsset): array
+    {
+        return $this->outputSizeDecision(
+            $this->assetByteSize($sourceAsset),
+            $this->assetByteSize($outputAsset)
+        );
+    }
+
+    private function outputSizeDecision(int $sourceSize, int $outputSize): array
+    {
+        $settings = $this->settings();
+        $minimumSavingsPercent = max(0, min(100, (int)$settings->minimumSavingsPercent));
+        $requiredMaxSize = $minimumSavingsPercent > 0
+            ? (int)floor($sourceSize * (100 - $minimumSavingsPercent) / 100)
+            : $sourceSize - 1;
+        $savingsBytes = $sourceSize - $outputSize;
+        $savingsPercent = $sourceSize > 0 ? ($savingsBytes / $sourceSize) * 100 : 0.0;
+
+        return [
+            'keep' => !$settings->skipLargerWebp || $sourceSize <= 0 || $outputSize <= 0 || $outputSize <= $requiredMaxSize,
+            'sourceSize' => $sourceSize,
+            'outputSize' => $outputSize,
+            'requiredMaxSize' => $requiredMaxSize,
+            'minimumSavingsPercent' => $minimumSavingsPercent,
+            'savingsBytes' => $savingsBytes,
+            'savingsPercent' => $savingsPercent,
+        ];
+    }
+
+    private function sizeSkipMessage(array $sizeCheck): string
+    {
+        $source = $this->formattedBytes((int)($sizeCheck['sourceSize'] ?? 0));
+        $output = $this->formattedBytes((int)($sizeCheck['outputSize'] ?? 0));
+        $minimumSavingsPercent = (int)($sizeCheck['minimumSavingsPercent'] ?? 0);
+
+        if ($minimumSavingsPercent > 0) {
+            return sprintf(
+                'Generated WebP was not saved because it did not meet the %s%% minimum savings requirement (GIF: %s, WebP: %s, savings: %.1f%%).',
+                $minimumSavingsPercent,
+                $source,
+                $output,
+                (float)($sizeCheck['savingsPercent'] ?? 0)
+            );
+        }
+
+        return sprintf(
+            'Generated WebP was not saved because it is not smaller than the source GIF (GIF: %s, WebP: %s).',
+            $source,
+            $output
+        );
+    }
+
+    private function assetByteSize(Asset $asset): int
+    {
+        $size = (int)($asset->size ?? 0);
+
+        if ($size > 0) {
+            return $size;
+        }
+
+        try {
+            $path = $asset->getPath();
+        } catch (\Throwable $e) {
+            return 0;
+        }
+
+        return is_string($path) && is_file($path) ? (int)filesize($path) : 0;
+    }
+
+    private function formattedBytes(int $bytes): string
+    {
+        $units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        $value = (float)$bytes;
+        $unit = 0;
+
+        while ($value >= 1024 && $unit < count($units) - 1) {
+            $value /= 1024;
+            $unit++;
+        }
+
+        if ($unit === 0) {
+            return sprintf('%d %s', $bytes, $units[$unit]);
+        }
+
+        return sprintf('%.1f %s', $value, $units[$unit]);
     }
 
     private function targetFilename(Asset $asset): string

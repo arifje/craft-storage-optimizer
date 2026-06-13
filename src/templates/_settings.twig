@@ -40,8 +40,23 @@
     errors: settings.getErrors('gif2webpPath')
 }) }}
 
+{{ forms.selectField({
+    label: "Compression mode"|t('storage-optimizer'),
+    instructions: "Lossy usually produces smaller animated WebP files. Mixed lets gif2webp choose lossy or lossless per frame."|t('storage-optimizer'),
+    id: 'compressionMode',
+    name: 'compressionMode',
+    options: [
+        { label: "Lossy"|t('storage-optimizer'), value: 'lossy' },
+        { label: "Mixed"|t('storage-optimizer'), value: 'mixed' },
+        { label: "Lossless"|t('storage-optimizer'), value: 'lossless' },
+    ],
+    value: settings.compressionMode,
+    errors: settings.getErrors('compressionMode')
+}) }}
+
 {{ forms.textField({
     label: "Quality"|t('storage-optimizer'),
+    instructions: "gif2webp quality from 0 to 100. Higher values are larger."|t('storage-optimizer'),
     id: 'quality',
     name: 'quality',
     type: 'number',
@@ -64,9 +79,39 @@
 }) }}
 
 {{ forms.lightswitchField({
+    label: "Minimize output size"|t('storage-optimizer'),
+    instructions: "Adds gif2webp's -min_size option. Conversion can be slower, but output is usually smaller."|t('storage-optimizer'),
+    id: 'minimizeOutputSize',
+    name: 'minimizeOutputSize',
+    on: settings.minimizeOutputSize,
+    errors: settings.getErrors('minimizeOutputSize')
+}) }}
+
+{{ forms.lightswitchField({
     label: "Use gif2webp multithreading"|t('storage-optimizer'),
     id: 'multiThreaded',
     name: 'multiThreaded',
     on: settings.multiThreaded,
     errors: settings.getErrors('multiThreaded')
+}) }}
+
+{{ forms.lightswitchField({
+    label: "Skip WebP files that are not smaller"|t('storage-optimizer'),
+    instructions: "When enabled, the generated WebP is only saved and referenced if it is smaller than the source GIF."|t('storage-optimizer'),
+    id: 'skipLargerWebp',
+    name: 'skipLargerWebp',
+    on: settings.skipLargerWebp,
+    errors: settings.getErrors('skipLargerWebp')
+}) }}
+
+{{ forms.textField({
+    label: "Minimum savings"|t('storage-optimizer'),
+    instructions: "Optional required size reduction percentage before saving a WebP. Use 0 to only require the WebP to be smaller."|t('storage-optimizer'),
+    id: 'minimumSavingsPercent',
+    name: 'minimumSavingsPercent',
+    type: 'number',
+    min: 0,
+    max: 100,
+    value: settings.minimumSavingsPercent,
+    errors: settings.getErrors('minimumSavingsPercent')
 }) }}

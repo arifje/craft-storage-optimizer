@@ -25,7 +25,9 @@ php craft plugin/install storage-optimizer
 - **Replace GIF references with WebP**: after a conversion completes, updates Craft asset-field relations, including Matrix-owned fields, so entries use the generated WebP asset while the original GIF remains in the volume.
 - **Queue delay**: defaults to `300` seconds so other plugins, such as a separate GIF-to-MP4 plugin, can process the original GIF first.
 - **gif2webp path**: defaults to `gif2webp`; environment variables are supported.
-- **Quality**, **method**, and **multithreading** options are passed to `gif2webp`.
+- **Compression mode**: defaults to lossy WebP. Lossless animated WebP can be larger than an optimized GIF.
+- **Quality**, **method**, **minimize output size**, and **multithreading** options are passed to `gif2webp`.
+- **Skip WebP files that are not smaller**: enabled by default. If the generated WebP is the same size or larger than the source GIF, it is not saved and GIF references are not replaced. You can also require a minimum savings percentage.
 
 Asset-save conversion never runs inline. It only creates or updates a conversion state row and pushes a queue job. If reference replacement is enabled, relation updates happen inside that queue job after the WebP asset has been saved.
 
