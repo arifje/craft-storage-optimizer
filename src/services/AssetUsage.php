@@ -7,6 +7,7 @@ use arifje\craftstorageoptimizer\jobs\ScanAssetUsageJob;
 use Craft;
 use craft\base\Component;
 use craft\elements\Asset;
+use craft\elements\Entry;
 use yii\db\Expression;
 use yii\db\Query;
 
@@ -22,6 +23,19 @@ class AssetUsage extends Component
 
     public const DEFAULT_BATCH_SIZE = 500;
     public const DEFAULT_DELETE_BATCH_SIZE = 100;
+    public const DEFAULT_REPORT_LIMIT = 25;
+    public const MAX_REPORT_LIMIT = 100;
+
+    private const REPORT_SORT_COLUMNS = [
+        'assetId' => 'a.assetId',
+        'filename' => 'a.filename',
+        'kind' => 'a.kind',
+        'extension' => 'a.extension',
+        'size' => 'a.size',
+        'volume' => 'v.name',
+        'dateCreated' => 'e.dateCreated',
+        'dateUpdated' => 'e.dateUpdated',
+    ];
 
     public function queueScan(int $batchSize = self::DEFAULT_BATCH_SIZE, ?int $volumeId = null): array
     {
@@ -376,23 +390,88 @@ class AssetUsage extends Component
         return $run ? $this->decorateRun($run) : null;
     }
 
-    public function topGhostAssets(int $runId, int $limit = 25): array
+    public function ghostAssetReport(
+        int $runId,
+        int $page = 1,
+        int $perPage = self::DEFAULT_REPORT_LIMIT,
+        string $sort = 'size',
+        string $direction = 'desc'
+    ): array
     {
         if (!$this->tableExists(self::ASSET_TABLE)) {
-            return [];
+            return $this->emptyReport($page, $perPage, $sort, $direction);
         }
 
-        $rows = (new Query())
-            ->from(self::ASSET_TABLE)
+        $sort = array_key_exists($sort, self::REPORT_SORT_COLUMNS) ? $sort : 'size';
+        $direction = strtolower($direction) === 'asc' ? 'asc' : 'desc';
+        $directionFlag = $direction === 'asc' ? SORT_ASC : SORT_DESC;
+        $perPage = max(5, min(self::MAX_REPORT_LIMIT, $perPage));
+        $page = max(1, $page);
+
+        $query = (new Query())
+            ->from(['a' => self::ASSET_TABLE])
+            ->leftJoin(['e' => '{{%elements}}'], '[[e.id]] = [[a.assetId]]')
+            ->leftJoin(['v' => '{{%volumes}}'], '[[v.id]] = [[a.volumeId]]')
             ->where([
                 'runId' => $runId,
                 'cleanupCandidate' => true,
+            ]);
+
+        $total = (int)(clone $query)->count('*', Craft::$app->getDb());
+        $totalPages = max(1, (int)ceil($total / $perPage));
+        $page = min($page, $totalPages);
+        $offset = ($page - 1) * $perPage;
+
+        $rows = $query
+            ->select([
+                'id' => 'a.id',
+                'runId' => 'a.runId',
+                'assetId' => 'a.assetId',
+                'volumeId' => 'a.volumeId',
+                'volumeName' => 'v.name',
+                'folderId' => 'a.folderId',
+                'filename' => 'a.filename',
+                'kind' => 'a.kind',
+                'extension' => 'a.extension',
+                'size' => 'a.size',
+                'width' => 'a.width',
+                'height' => 'a.height',
+                'relationCount' => 'a.relationCount',
+                'directRelationCount' => 'a.directRelationCount',
+                'matrixRelationCount' => 'a.matrixRelationCount',
+                'sourceElementCount' => 'a.sourceElementCount',
+                'ownerElementCount' => 'a.ownerElementCount',
+                'isProtected' => 'a.isProtected',
+                'protectedReason' => 'a.protectedReason',
+                'cleanupCandidate' => 'a.cleanupCandidate',
+                'assetDateCreated' => 'e.dateCreated',
+                'assetDateUpdated' => 'e.dateUpdated',
             ])
-            ->orderBy(['size' => SORT_DESC, 'assetId' => SORT_ASC])
-            ->limit($limit)
+            ->orderBy([
+                self::REPORT_SORT_COLUMNS[$sort] => $directionFlag,
+                'a.assetId' => SORT_ASC,
+            ])
+            ->offset($offset)
+            ->limit($perPage)
             ->all();
 
-        return array_map(fn(array $row): array => $this->decorateAssetRow($row), $rows);
+        return [
+            'rows' => $this->decorateAssetRows($rows),
+            'total' => $total,
+            'page' => $page,
+            'perPage' => $perPage,
+            'totalPages' => $totalPages,
+            'sort' => $sort,
+            'direction' => $direction,
+            'from' => $total > 0 ? $offset + 1 : 0,
+            'to' => min($offset + count($rows), $total),
+            'sortColumns' => array_keys(self::REPORT_SORT_COLUMNS),
+        ];
+    }
+
+    public function topGhostAssets(int $runId, int $limit = self::DEFAULT_REPORT_LIMIT): array
+    {
+        return $this->ghostAssetReport($runId, 1, $limit)['rows'];
     }
 
     public function clearSnapshots(): int
@@ -519,35 +598,16 @@ class AssetUsage extends Component
             ->from(['r' => '{{%relations}}'])
             ->where(['r.targetId' => $assetIds])
             ->groupBy(['r.targetId']);
-
-        $matrixConditions = [];
-        $ownerColumns = ['[[r.sourceId]]'];
-
-        if ($this->hasTableColumn('{{%matrixblocks}}', 'primaryOwnerId')) {
-            $query->leftJoin(['mb' => '{{%matrixblocks}}'], '[[mb.id]] = [[r.sourceId]]');
-            array_unshift($ownerColumns, '[[mb.primaryOwnerId]]');
-            $matrixConditions[] = '[[mb.id]] IS NOT NULL';
-        }
-
-        if ($this->hasTableColumn('{{%entries}}', 'primaryOwnerId')) {
-            $query->leftJoin(['se' => '{{%entries}}'], '[[se.id]] = [[r.sourceId]]');
-            array_unshift($ownerColumns, '[[se.primaryOwnerId]]');
-            $matrixConditions[] = '[[se.primaryOwnerId]] IS NOT NULL';
-        }
-
-        $matrixCondition = empty($matrixConditions) ? '0 = 1' : '(' . implode(' OR ', $matrixConditions) . ')';
-        $ownerExpression = count($ownerColumns) === 1
-            ? 'COUNT(DISTINCT [[r.sourceId]])'
-            : 'COUNT(DISTINCT COALESCE(' . implode(', ', $ownerColumns) . '))';
+        $expressions = $this->relationOwnerExpressions($query);
 
         $rows = $query
             ->select([
                 'targetId' => 'r.targetId',
                 'relationCount' => new Expression('COUNT(*)'),
-                'directRelationCount' => new Expression('SUM(CASE WHEN ' . $matrixCondition . ' THEN 0 ELSE 1 END)'),
-                'matrixRelationCount' => new Expression('SUM(CASE WHEN ' . $matrixCondition . ' THEN 1 ELSE 0 END)'),
+                'directRelationCount' => new Expression('SUM(CASE WHEN ' . $expressions['matrixCondition'] . ' THEN 0 ELSE 1 END)'),
+                'matrixRelationCount' => new Expression('SUM(CASE WHEN ' . $expressions['matrixCondition'] . ' THEN 1 ELSE 0 END)'),
                 'sourceElementCount' => new Expression('COUNT(DISTINCT [[r.sourceId]])'),
-                'ownerElementCount' => new Expression($ownerExpression),
+                'ownerElementCount' => new Expression($expressions['ownerCountExpression']),
             ])
             ->all();
 
@@ -564,6 +624,34 @@ class AssetUsage extends Component
         }
 
         return $stats;
+    }
+
+    private function relationOwnerExpressions(Query $query): array
+    {
+        $matrixConditions = [];
+        $ownerColumns = ['[[r.sourceId]]'];
+
+        if ($this->hasTableColumn('{{%matrixblocks}}', 'primaryOwnerId')) {
+            $query->leftJoin(['mb' => '{{%matrixblocks}}'], '[[mb.id]] = [[r.sourceId]]');
+            array_unshift($ownerColumns, '[[mb.primaryOwnerId]]');
+            $matrixConditions[] = '[[mb.id]] IS NOT NULL';
+        }
+
+        if ($this->hasTableColumn('{{%entries}}', 'primaryOwnerId')) {
+            $query->leftJoin(['se' => '{{%entries}}'], '[[se.id]] = [[r.sourceId]]');
+            array_unshift($ownerColumns, '[[se.primaryOwnerId]]');
+            $matrixConditions[] = '[[se.primaryOwnerId]] IS NOT NULL';
+        }
+
+        $ownerExpression = count($ownerColumns) === 1
+            ? '[[r.sourceId]]'
+            : 'COALESCE(' . implode(', ', $ownerColumns) . ')';
+
+        return [
+            'matrixCondition' => empty($matrixConditions) ? '0 = 1' : '(' . implode(' OR ', $matrixConditions) . ')',
+            'ownerCountExpression' => 'COUNT(DISTINCT ' . $ownerExpression . ')',
+            'ownerIdExpression' => 'MIN(' . $ownerExpression . ')',
+        ];
     }
 
     private function protectionStats(array $assetIds): array
@@ -763,17 +851,139 @@ class AssetUsage extends Component
         $run['largestBytesFormatted'] = $this->formattedBytes((int)($run['largestBytes'] ?? 0));
         $run['averageBytesFormatted'] = $assetCount > 0 ? $this->formattedBytes((int)floor($totalBytes / $assetCount)) : '0 B';
         $run['deleteDeletedBytesFormatted'] = $this->formattedBytes((int)($run['deleteDeletedBytes'] ?? 0));
+        $run['volumeName'] = $this->volumeName((int)($run['volumeId'] ?? 0));
         $run['isActive'] = in_array($run['status'] ?? null, [self::STATUS_QUEUED, self::STATUS_RUNNING], true);
         $run['deleteIsActive'] = in_array($run['deleteStatus'] ?? null, [self::STATUS_QUEUED, self::STATUS_RUNNING], true);
 
         return $run;
     }
 
-    private function decorateAssetRow(array $row): array
+    private function decorateAssetRows(array $rows): array
+    {
+        $assetIds = array_map(static fn(array $row): int => (int)$row['assetId'], $rows);
+        $ownerIdsByAsset = $this->ownerIdsForAssets($assetIds);
+        $owners = $this->ownerEntries(array_values($ownerIdsByAsset));
+
+        return array_map(function(array $row) use ($ownerIdsByAsset, $owners): array {
+            return $this->decorateAssetRow($row, $ownerIdsByAsset, $owners);
+        }, $rows);
+    }
+
+    private function decorateAssetRow(array $row, array $ownerIdsByAsset = [], array $owners = []): array
     {
         $row['sizeFormatted'] = $this->formattedBytes((int)($row['size'] ?? 0));
+        $row['volumeName'] = $row['volumeName'] ?: $this->volumeName((int)($row['volumeId'] ?? 0));
+        $row['assetDateCreatedFormatted'] = $this->formatDateTime($row['assetDateCreated'] ?? null);
+        $row['assetDateUpdatedFormatted'] = $this->formatDateTime($row['assetDateUpdated'] ?? null);
+
+        $ownerId = $ownerIdsByAsset[(int)$row['assetId']] ?? null;
+        $owner = $ownerId !== null ? ($owners[$ownerId] ?? null) : null;
+
+        $row['ownerId'] = $ownerId;
+        $row['ownerTitle'] = $owner['title'] ?? null;
+        $row['ownerUrl'] = $owner['url'] ?? null;
 
         return $row;
+    }
+
+    private function emptyReport(int $page, int $perPage, string $sort, string $direction): array
+    {
+        return [
+            'rows' => [],
+            'total' => 0,
+            'page' => max(1, $page),
+            'perPage' => max(5, min(self::MAX_REPORT_LIMIT, $perPage)),
+            'totalPages' => 1,
+            'sort' => array_key_exists($sort, self::REPORT_SORT_COLUMNS) ? $sort : 'size',
+            'direction' => strtolower($direction) === 'asc' ? 'asc' : 'desc',
+            'from' => 0,
+            'to' => 0,
+            'sortColumns' => array_keys(self::REPORT_SORT_COLUMNS),
+        ];
+    }
+
+    private function volumeName(?int $volumeId): ?string
+    {
+        if (empty($volumeId)) {
+            return null;
+        }
+
+        $volume = Craft::$app->getVolumes()->getVolumeById($volumeId);
+
+        return $volume?->name;
+    }
+
+    private function formatDateTime($value): string
+    {
+        if (empty($value)) {
+            return '-';
+        }
+
+        try {
+            return Craft::$app->getFormatter()->asDatetime($value, 'short');
+        } catch (\Throwable) {
+            return (string)$value;
+        }
+    }
+
+    private function ownerIdsForAssets(array $assetIds): array
+    {
+        $assetIds = array_values(array_filter(array_unique(array_map('intval', $assetIds))));
+
+        if (empty($assetIds)) {
+            return [];
+        }
+
+        $query = (new Query())
+            ->from(['r' => '{{%relations}}'])
+            ->where(['r.targetId' => $assetIds])
+            ->groupBy(['r.targetId']);
+        $expressions = $this->relationOwnerExpressions($query);
+        $rows = $query
+            ->select([
+                'targetId' => 'r.targetId',
+                'ownerElementId' => new Expression($expressions['ownerIdExpression']),
+            ])
+            ->all();
+
+        $owners = [];
+
+        foreach ($rows as $row) {
+            if (!empty($row['ownerElementId'])) {
+                $owners[(int)$row['targetId']] = (int)$row['ownerElementId'];
+            }
+        }
+
+        return $owners;
+    }
+
+    private function ownerEntries(array $ownerIds): array
+    {
+        $ownerIds = array_values(array_filter(array_unique(array_map('intval', $ownerIds))));
+
+        if (empty($ownerIds)) {
+            return [];
+        }
+
+        $entries = Entry::find()
+            ->id($ownerIds)
+            ->site('*')
+            ->status(null)
+            ->all();
+        $owners = [];
+
+        foreach ($entries as $entry) {
+            if (isset($owners[(int)$entry->id])) {
+                continue;
+            }
+
+            $owners[(int)$entry->id] = [
+                'title' => (string)$entry,
+                'url' => $entry->getCpEditUrl(),
+            ];
+        }
+
+        return $owners;
     }
 
     private function deleteGhostAsset(array $row, bool $hardDelete): array
