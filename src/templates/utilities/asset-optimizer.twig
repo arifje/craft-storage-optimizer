@@ -229,8 +229,20 @@
                 <button type="submit" class="btn">{{ "Clear snapshots"|t('storage-optimizer') }}</button>
             </form>
 
+            {% if latestRun.deleteIsActive %}
+                {% set cancelGhostConfirm = "Cancel the active ghost asset deletion? The current batch may finish, but no new batches will be queued."|t('storage-optimizer') %}
+                <form method="post" accept-charset="UTF-8" class="so-action-form" onsubmit="return confirm('{{ cancelGhostConfirm|e('js') }}');">
+                    {{ csrfInput() }}
+                    {{ actionInput('storage-optimizer/asset-usage/cancel-delete-ghosts') }}
+                    {{ redirectInput(craft.app.request.url) }}
+                    {{ hiddenInput('runId', latestRun.id) }}
+                    <button type="submit" class="btn">{{ "Cancel deletion"|t('storage-optimizer') }}</button>
+                </form>
+            {% endif %}
+
             {% if latestRun.status == 'completed' and latestRun.ghostAssets > 0 and not latestRun.deleteIsActive %}
-                <form method="post" accept-charset="UTF-8" class="so-action-form">
+                {% set deleteGhostConfirm = "Queue deletion of {count} ghost assets from this snapshot? Assets are re-checked before deletion and moved to Craft's trash."|t('storage-optimizer', { count: latestRun.ghostAssets }) %}
+                <form method="post" accept-charset="UTF-8" class="so-action-form" onsubmit="return confirm('{{ deleteGhostConfirm|e('js') }}');">
                     {{ csrfInput() }}
                     {{ actionInput('storage-optimizer/asset-usage/delete-ghosts') }}
                     {{ redirectInput(craft.app.request.url) }}
@@ -249,7 +261,7 @@
                         }) }}
                     </div>
 
-                    <button type="submit" class="btn submit delete" data-confirm="{{ "Queue deletion of {count} ghost assets from this snapshot? Assets are re-checked before deletion and moved to Craft's trash."|t('storage-optimizer', { count: latestRun.ghostAssets }) }}">{{ "Delete ghost assets"|t('storage-optimizer') }}</button>
+                    <button type="submit" class="btn submit delete">{{ "Delete ghost assets"|t('storage-optimizer') }}</button>
                 </form>
             {% endif %}
         {% endif %}

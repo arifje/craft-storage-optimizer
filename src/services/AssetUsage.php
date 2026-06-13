@@ -20,6 +20,7 @@ class AssetUsage extends Component
     public const STATUS_RUNNING = 'running';
     public const STATUS_COMPLETED = 'completed';
     public const STATUS_FAILED = 'failed';
+    public const STATUS_CANCELED = 'canceled';
 
     public const DEFAULT_BATCH_SIZE = 500;
     public const DEFAULT_DELETE_BATCH_SIZE = 100;
@@ -211,7 +212,7 @@ class AssetUsage extends Component
             ];
         }
 
-        if (in_array($run['deleteStatus'] ?? null, [self::STATUS_QUEUED, self::STATUS_RUNNING], true)) {
+        if ($this->isDeleteActiveStatus($run['deleteStatus'] ?? null)) {
             return [
                 'queued' => false,
                 'reason' => 'delete-already-active',
@@ -260,11 +261,44 @@ class AssetUsage extends Component
         ];
     }
 
+    public function cancelDeleteGhosts(?int $runId = null): array
+    {
+        $run = $runId !== null ? $this->getRunById($runId) : $this->latestRun();
+
+        if ($run === null) {
+            return [
+                'canceled' => false,
+                'reason' => 'no-scan',
+                'run' => null,
+            ];
+        }
+
+        if (!$this->isDeleteActiveStatus($run['deleteStatus'] ?? null)) {
+            return [
+                'canceled' => false,
+                'reason' => 'no-active-delete',
+                'run' => $run,
+            ];
+        }
+
+        $this->updateRun((int)$run['id'], [
+            'deleteStatus' => self::STATUS_CANCELED,
+            'deleteCompletedAt' => $this->now(),
+            'deleteLastError' => null,
+        ]);
+
+        return [
+            'canceled' => true,
+            'reason' => 'canceled',
+            'run' => $this->getRunById((int)$run['id']),
+        ];
+    }
+
     public function processDeleteGhostsBatch(int $runId, int $batchSize, bool $hardDelete = false): array
     {
         $run = $this->getRunById($runId);
 
-        if ($run === null || !in_array($run['deleteStatus'] ?? null, [self::STATUS_QUEUED, self::STATUS_RUNNING], true)) {
+        if ($run === null || !$this->isDeleteActiveStatus($run['deleteStatus'] ?? null)) {
             return [
                 'attempted' => 0,
                 'deleted' => 0,
@@ -310,9 +344,13 @@ class AssetUsage extends Component
                 'deletedBytes' => 0,
                 'lastError' => null,
             ];
-            $lastAssetId = 0;
+            $lastAssetId = (int)($run['deleteLastAssetId'] ?? 0);
 
             foreach ($rows as $row) {
+                if (!$this->deleteRunIsActive($runId)) {
+                    break;
+                }
+
                 $lastAssetId = max($lastAssetId, (int)$row['assetId']);
                 $summary['attempted']++;
                 $result = $this->deleteGhostAsset($row, $hardDelete);
@@ -344,14 +382,15 @@ class AssetUsage extends Component
 
             $this->updateRun($runId, $updateValues);
 
-            $queuedNext = count($rows) === $batchSize;
+            $deleteIsStillActive = $this->deleteRunIsActive($runId);
+            $queuedNext = $deleteIsStillActive && $summary['attempted'] === count($rows) && count($rows) === $batchSize;
 
             if ($queuedNext) {
                 $jobId = $this->pushDeleteGhostsJob($runId, $batchSize, $hardDelete);
                 $this->updateRun($runId, [
                     'deleteJobId' => $jobId !== null ? (string)$jobId : null,
                 ]);
-            } else {
+            } elseif ($deleteIsStillActive) {
                 $this->updateRun($runId, [
                     'deleteStatus' => self::STATUS_COMPLETED,
                     'deleteCompletedAt' => $this->now(),
@@ -364,7 +403,8 @@ class AssetUsage extends Component
                 'skipped' => $summary['skipped'],
                 'failed' => $summary['failed'],
                 'queuedNext' => $queuedNext,
-                'completed' => !$queuedNext,
+                'completed' => $deleteIsStillActive && !$queuedNext,
+                'canceled' => !$deleteIsStillActive,
             ];
         } catch (\Throwable $e) {
             $this->updateRun($runId, [
@@ -846,6 +886,18 @@ class AssetUsage extends Component
             ->execute();
     }
 
+    private function deleteRunIsActive(int $runId): bool
+    {
+        $run = $this->getRunById($runId);
+
+        return $run !== null && $this->isDeleteActiveStatus($run['deleteStatus'] ?? null);
+    }
+
+    private function isDeleteActiveStatus(?string $status): bool
+    {
+        return in_array($status, [self::STATUS_QUEUED, self::STATUS_RUNNING], true);
+    }
+
     private function decorateRun(array $run): array
     {
         $totalBytes = (int)($run['totalBytes'] ?? 0);
@@ -860,7 +912,7 @@ class AssetUsage extends Component
         $run['deleteDeletedBytesFormatted'] = $this->formattedBytes((int)($run['deleteDeletedBytes'] ?? 0));
         $run['volumeName'] = $this->volumeName((int)($run['volumeId'] ?? 0));
         $run['isActive'] = in_array($run['status'] ?? null, [self::STATUS_QUEUED, self::STATUS_RUNNING], true);
-        $run['deleteIsActive'] = in_array($run['deleteStatus'] ?? null, [self::STATUS_QUEUED, self::STATUS_RUNNING], true);
+        $run['deleteIsActive'] = $this->isDeleteActiveStatus($run['deleteStatus'] ?? null);
 
         return $run;
     }

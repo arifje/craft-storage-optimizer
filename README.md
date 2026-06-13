@@ -54,10 +54,11 @@ php craft storage-optimizer/asset-usage/scan --batchSize=500
 php craft storage-optimizer/asset-usage/scan --volumeId=1 --batchSize=500
 php craft storage-optimizer/asset-usage/status
 php craft storage-optimizer/asset-usage/delete-ghosts --batchSize=100
+php craft storage-optimizer/asset-usage/cancel-delete-ghosts
 php craft storage-optimizer/asset-usage/clear
 ```
 
-Console cleanup also supports `--runId=123` to target a specific completed snapshot and `--hardDelete=1` when you intentionally want permanent deletion instead of Craft trash.
+Console cleanup also supports `--runId=123` to target a specific completed snapshot and `--hardDelete=1` when you intentionally want permanent deletion instead of Craft trash. Use `cancel-delete-ghosts` with optional `--runId=123` to stop an active cleanup snapshot; the current batch may finish, but no new batches will be queued.
 
 ## GIF Usage Insights
 
@@ -85,10 +86,11 @@ Start a scan from the utility, or from the console:
 php craft storage-optimizer/insights/scan --batchSize=500
 php craft storage-optimizer/insights/status
 php craft storage-optimizer/insights/delete-unused --batchSize=100
+php craft storage-optimizer/insights/cancel-delete-unused
 php craft storage-optimizer/insights/clear
 ```
 
-Console cleanup also supports `--runId=123` to target a specific completed snapshot and `--hardDelete=1` when you intentionally want permanent deletion instead of Craft trash.
+Console cleanup also supports `--runId=123` to target a specific completed snapshot and `--hardDelete=1` when you intentionally want permanent deletion instead of Craft trash. Use `cancel-delete-unused` with optional `--runId=123` to stop an active cleanup snapshot; the current batch may finish, but no new batches will be queued.
 
 ## Console Commands
 
@@ -105,7 +107,9 @@ php craft storage-optimizer/delete
 php craft storage-optimizer/asset-usage/scan
 php craft storage-optimizer/asset-usage/status
 php craft storage-optimizer/asset-usage/delete-ghosts
+php craft storage-optimizer/asset-usage/cancel-delete-ghosts
 php craft storage-optimizer/insights/delete-unused
+php craft storage-optimizer/insights/cancel-delete-unused
 ```
 
 `archive` and `delete` are command placeholders for the later retention/destructive workflow.

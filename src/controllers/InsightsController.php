@@ -62,4 +62,25 @@ class InsightsController extends Controller
 
         return $this->redirectToPostedUrl();
     }
+
+    public function actionCancelDeleteUnused(): ?Response
+    {
+        $this->requirePostRequest();
+        $this->requirePermission('utility:storage-optimizer-gif-usage');
+
+        $runId = (int)Craft::$app->getRequest()->getBodyParam('runId') ?: null;
+        $result = StorageOptimizer::getInstance()->insights->cancelDeleteUnused($runId);
+
+        if ($result['canceled']) {
+            Craft::$app->getSession()->setNotice(Craft::t('storage-optimizer', 'Unused GIF asset deletion canceled.'));
+        } elseif ($result['reason'] === 'no-active-delete') {
+            Craft::$app->getSession()->setNotice(Craft::t('storage-optimizer', 'There is no active unused GIF asset deletion to cancel.'));
+        } else {
+            Craft::$app->getSession()->setError(Craft::t('storage-optimizer', 'Could not cancel unused GIF asset deletion: {reason}', [
+                'reason' => $result['reason'],
+            ]));
+        }
+
+        return $this->redirectToPostedUrl();
+    }
 }

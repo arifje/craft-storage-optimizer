@@ -83,6 +83,17 @@ class AssetUsageController extends BaseCommandController
         return ExitCode::OK;
     }
 
+    public function actionCancelDeleteGhosts(): int
+    {
+        $result = $this->assetUsage()->cancelDeleteGhosts($this->runId > 0 ? $this->runId : null);
+
+        $this->stdout(sprintf("canceled: %s%s", $result['canceled'] ? 'yes' : 'no', PHP_EOL));
+        $this->stdout(sprintf("reason: %s%s", $result['reason'], PHP_EOL));
+        $this->stdout(sprintf("runId: %s%s", $result['run']['id'] ?? '-', PHP_EOL));
+
+        return ExitCode::OK;
+    }
+
     public function actionClear(): int
     {
         $deleted = $this->assetUsage()->clearSnapshots();

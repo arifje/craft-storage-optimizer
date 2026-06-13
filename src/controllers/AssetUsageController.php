@@ -52,6 +52,27 @@ class AssetUsageController extends Controller
         return $this->redirectToPostedUrl();
     }
 
+    public function actionCancelDeleteGhosts(): ?Response
+    {
+        $this->requirePostRequest();
+        $this->requirePermission('utility:asset-optimizer-usage');
+
+        $runId = (int)Craft::$app->getRequest()->getBodyParam('runId') ?: null;
+        $result = StorageOptimizer::getInstance()->assetUsage->cancelDeleteGhosts($runId);
+
+        if ($result['canceled']) {
+            Craft::$app->getSession()->setNotice(Craft::t('storage-optimizer', 'Ghost asset deletion canceled.'));
+        } elseif ($result['reason'] === 'no-active-delete') {
+            Craft::$app->getSession()->setNotice(Craft::t('storage-optimizer', 'There is no active ghost asset deletion to cancel.'));
+        } else {
+            Craft::$app->getSession()->setError(Craft::t('storage-optimizer', 'Could not cancel ghost asset deletion: {reason}', [
+                'reason' => $result['reason'],
+            ]));
+        }
+
+        return $this->redirectToPostedUrl();
+    }
+
     public function actionClear(): ?Response
     {
         $this->requirePostRequest();
