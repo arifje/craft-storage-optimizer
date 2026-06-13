@@ -81,6 +81,13 @@
         margin-top: 6px;
     }
 
+    .so-metric-subvalue {
+        color: #596673;
+        font-size: 12px;
+        font-weight: 500;
+        margin-top: 4px;
+    }
+
     .so-section-header {
         align-items: baseline;
         display: flex;
@@ -266,6 +273,11 @@
             <div class="so-metric">
                 <div class="so-metric-label">{{ "Unused assets"|t('storage-optimizer') }}</div>
                 <div class="so-metric-value">{{ latestRun.unusedAssets|number }}</div>
+            </div>
+            <div class="so-metric">
+                <div class="so-metric-label">{{ "Unused GIF size"|t('storage-optimizer') }}</div>
+                <div class="so-metric-value">{{ latestRun.unusedBytesFormatted }}</div>
+                <div class="so-metric-subvalue">{{ "{size} MB"|t('storage-optimizer', { size: latestRun.unusedBytesMegabytesFormatted }) }}</div>
             </div>
             <div class="so-metric">
                 <div class="so-metric-label">{{ "Relation references"|t('storage-optimizer') }}</div>

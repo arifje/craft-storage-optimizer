@@ -511,6 +511,11 @@ class Insights extends Component
         return sprintf('%.1f %s', $value, $units[$unit]);
     }
 
+    public function formattedMegabytes(int $bytes): string
+    {
+        return Craft::$app->getFormatter()->asDecimal($bytes / 1048576, 1);
+    }
+
     private function getActiveRun(): ?array
     {
         if (!$this->tableExists(self::RUN_TABLE)) {
@@ -805,9 +810,12 @@ class Insights extends Component
     private function decorateRun(array $run): array
     {
         $totalBytes = (int)($run['totalBytes'] ?? 0);
+        $unusedBytes = $this->unusedBytesForRun((int)($run['id'] ?? 0));
         $gifAssets = (int)($run['gifAssets'] ?? 0);
 
         $run['totalBytesFormatted'] = $this->formattedBytes($totalBytes);
+        $run['unusedBytesFormatted'] = $this->formattedBytes($unusedBytes);
+        $run['unusedBytesMegabytesFormatted'] = $this->formattedMegabytes($unusedBytes);
         $run['largestBytesFormatted'] = $this->formattedBytes((int)($run['largestBytes'] ?? 0));
         $run['averageBytesFormatted'] = $gifAssets > 0 ? $this->formattedBytes((int)floor($totalBytes / $gifAssets)) : '0 B';
         $run['deleteFreedBytesFormatted'] = $this->formattedBytes((int)($run['deleteFreedBytes'] ?? 0));
@@ -815,6 +823,23 @@ class Insights extends Component
         $run['deleteIsActive'] = in_array($run['deleteStatus'] ?? null, [self::STATUS_QUEUED, self::STATUS_RUNNING], true);
 
         return $run;
+    }
+
+    private function unusedBytesForRun(int $runId): int
+    {
+        if ($runId <= 0 || !$this->tableExists(self::ASSET_TABLE)) {
+            return 0;
+        }
+
+        $bytes = (new Query())
+            ->from(self::ASSET_TABLE)
+            ->where([
+                'runId' => $runId,
+                'relationCount' => 0,
+            ])
+            ->sum('[[size]]', Craft::$app->getDb());
+
+        return (int)($bytes ?? 0);
     }
 
     private function decorateAssetRow(array $row): array

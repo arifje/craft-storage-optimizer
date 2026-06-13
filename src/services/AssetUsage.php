@@ -517,6 +517,11 @@ class AssetUsage extends Component
         return sprintf('%.1f %s', $value, $units[$unit]);
     }
 
+    public function formattedMegabytes(int $bytes): string
+    {
+        return Craft::$app->getFormatter()->asDecimal($bytes / 1048576, 1);
+    }
+
     public function availableVolumes(): array
     {
         $volumes = [];
@@ -844,10 +849,12 @@ class AssetUsage extends Component
     private function decorateRun(array $run): array
     {
         $totalBytes = (int)($run['totalBytes'] ?? 0);
+        $ghostBytes = (int)($run['ghostBytes'] ?? 0);
         $assetCount = (int)($run['assetCount'] ?? 0);
 
         $run['totalBytesFormatted'] = $this->formattedBytes($totalBytes);
-        $run['ghostBytesFormatted'] = $this->formattedBytes((int)($run['ghostBytes'] ?? 0));
+        $run['ghostBytesFormatted'] = $this->formattedBytes($ghostBytes);
+        $run['ghostBytesMegabytesFormatted'] = $this->formattedMegabytes($ghostBytes);
         $run['largestBytesFormatted'] = $this->formattedBytes((int)($run['largestBytes'] ?? 0));
         $run['averageBytesFormatted'] = $assetCount > 0 ? $this->formattedBytes((int)floor($totalBytes / $assetCount)) : '0 B';
         $run['deleteDeletedBytesFormatted'] = $this->formattedBytes((int)($run['deleteDeletedBytes'] ?? 0));

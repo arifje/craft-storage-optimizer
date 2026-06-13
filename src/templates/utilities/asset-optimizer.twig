@@ -81,6 +81,13 @@
         margin-top: 6px;
     }
 
+    .so-metric-subvalue {
+        color: #596673;
+        font-size: 12px;
+        font-weight: 500;
+        margin-top: 4px;
+    }
+
     .so-section-header {
         align-items: baseline;
         display: flex;
@@ -285,6 +292,7 @@
             <div class="so-metric">
                 <div class="so-metric-label">{{ "Ghost size"|t('storage-optimizer') }}</div>
                 <div class="so-metric-value">{{ latestRun.ghostBytesFormatted }}</div>
+                <div class="so-metric-subvalue">{{ "{size} MB"|t('storage-optimizer', { size: latestRun.ghostBytesMegabytesFormatted }) }}</div>
             </div>
             <div class="so-metric">
                 <div class="so-metric-label">{{ "Protected assets"|t('storage-optimizer') }}</div>
