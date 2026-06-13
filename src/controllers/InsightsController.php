@@ -54,6 +54,8 @@ class InsightsController extends Controller
             Craft::$app->getSession()->setNotice(Craft::t('storage-optimizer', 'Unused GIF asset deletion queued.'));
         } elseif ($result['reason'] === 'delete-already-active') {
             Craft::$app->getSession()->setNotice(Craft::t('storage-optimizer', 'Unused GIF asset deletion is already running.'));
+        } elseif ($result['reason'] === 'delete-already-completed') {
+            Craft::$app->getSession()->setNotice(Craft::t('storage-optimizer', 'Unused GIF asset deletion already completed for this snapshot. Run a new scan before deleting again.'));
         } else {
             Craft::$app->getSession()->setError(Craft::t('storage-optimizer', 'Could not queue unused GIF asset deletion: {reason}', [
                 'reason' => $result['reason'],

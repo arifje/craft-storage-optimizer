@@ -240,7 +240,7 @@
                 </form>
             {% endif %}
 
-            {% if latestRun.status == 'completed' and latestRun.ghostAssets > 0 and not latestRun.deleteIsActive %}
+            {% if latestRun.deleteCanQueue %}
                 {% set deleteGhostConfirm = "Queue deletion of {count} ghost assets from this snapshot? Assets are re-checked before deletion and moved to Craft's trash."|t('storage-optimizer', { count: latestRun.ghostAssets }) %}
                 <form method="post" accept-charset="UTF-8" class="so-action-form" onsubmit="return confirm('{{ deleteGhostConfirm|e('js') }}');">
                     {{ csrfInput() }}

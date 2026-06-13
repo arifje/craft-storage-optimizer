@@ -43,6 +43,8 @@ class AssetUsageController extends Controller
             Craft::$app->getSession()->setNotice(Craft::t('storage-optimizer', 'Ghost asset deletion queued.'));
         } elseif ($result['reason'] === 'delete-already-active') {
             Craft::$app->getSession()->setNotice(Craft::t('storage-optimizer', 'Ghost asset deletion is already running.'));
+        } elseif ($result['reason'] === 'delete-already-completed') {
+            Craft::$app->getSession()->setNotice(Craft::t('storage-optimizer', 'Ghost asset deletion already completed for this snapshot. Run a new scan before deleting again.'));
         } else {
             Craft::$app->getSession()->setError(Craft::t('storage-optimizer', 'Could not queue ghost asset deletion: {reason}', [
                 'reason' => $result['reason'],

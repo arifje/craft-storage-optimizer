@@ -221,6 +221,15 @@ class AssetUsage extends Component
             ];
         }
 
+        if (($run['deleteStatus'] ?? null) === self::STATUS_COMPLETED) {
+            return [
+                'queued' => false,
+                'reason' => 'delete-already-completed',
+                'run' => $run,
+                'jobId' => $run['deleteJobId'] ?? null,
+            ];
+        }
+
         if ((int)($run['ghostAssets'] ?? 0) === 0) {
             return [
                 'queued' => false,
@@ -383,7 +392,10 @@ class AssetUsage extends Component
             $this->updateRun($runId, $updateValues);
 
             $deleteIsStillActive = $this->deleteRunIsActive($runId);
-            $queuedNext = $deleteIsStillActive && $summary['attempted'] === count($rows) && count($rows) === $batchSize;
+            $queuedNext = $deleteIsStillActive
+                && $summary['attempted'] > 0
+                && $summary['attempted'] === count($rows)
+                && $this->hasMoreGhostAssetRows($runId, $lastAssetId);
 
             if ($queuedNext) {
                 $jobId = $this->pushDeleteGhostsJob($runId, $batchSize, $hardDelete);
@@ -730,15 +742,31 @@ class AssetUsage extends Component
     private function nextGhostAssetRows(int $runId, int $lastAssetId, int $limit): array
     {
         return (new Query())
-            ->from(self::ASSET_TABLE)
+            ->from(['a' => self::ASSET_TABLE])
+            ->innerJoin(['e' => '{{%elements}}'], '[[e.id]] = [[a.assetId]]')
             ->where([
-                'runId' => $runId,
-                'cleanupCandidate' => true,
+                'a.runId' => $runId,
+                'a.cleanupCandidate' => true,
+                'e.dateDeleted' => null,
             ])
-            ->andWhere(['>', 'assetId', $lastAssetId])
-            ->orderBy(['assetId' => SORT_ASC])
+            ->andWhere(['>', 'a.assetId', $lastAssetId])
+            ->orderBy(['a.assetId' => SORT_ASC])
             ->limit($limit)
             ->all();
+    }
+
+    private function hasMoreGhostAssetRows(int $runId, int $lastAssetId): bool
+    {
+        return (new Query())
+            ->from(['a' => self::ASSET_TABLE])
+            ->innerJoin(['e' => '{{%elements}}'], '[[e.id]] = [[a.assetId]]')
+            ->where([
+                'a.runId' => $runId,
+                'a.cleanupCandidate' => true,
+                'e.dateDeleted' => null,
+            ])
+            ->andWhere(['>', 'a.assetId', $lastAssetId])
+            ->exists(Craft::$app->getDb());
     }
 
     private function storeAssetBatch(int $runId, array $assets, array $relationStats, array $protectionStats): array
@@ -913,6 +941,10 @@ class AssetUsage extends Component
         $run['volumeName'] = $this->volumeName((int)($run['volumeId'] ?? 0));
         $run['isActive'] = in_array($run['status'] ?? null, [self::STATUS_QUEUED, self::STATUS_RUNNING], true);
         $run['deleteIsActive'] = $this->isDeleteActiveStatus($run['deleteStatus'] ?? null);
+        $run['deleteCanQueue'] = ($run['status'] ?? null) === self::STATUS_COMPLETED
+            && (int)($run['ghostAssets'] ?? 0) > 0
+            && !$run['deleteIsActive']
+            && ($run['deleteStatus'] ?? null) !== self::STATUS_COMPLETED;
 
         return $run;
     }

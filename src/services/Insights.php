@@ -220,6 +220,15 @@ class Insights extends Component
             ];
         }
 
+        if (($run['deleteStatus'] ?? null) === self::STATUS_COMPLETED) {
+            return [
+                'queued' => false,
+                'reason' => 'delete-already-completed',
+                'run' => $run,
+                'jobId' => $run['deleteJobId'] ?? null,
+            ];
+        }
+
         if ((int)($run['unusedAssets'] ?? 0) === 0) {
             return [
                 'queued' => false,
@@ -383,7 +392,10 @@ class Insights extends Component
             $this->updateRun($runId, $updateValues);
 
             $deleteIsStillActive = $this->deleteRunIsActive($runId);
-            $queuedNext = $deleteIsStillActive && $summary['attempted'] === count($rows) && count($rows) === $batchSize;
+            $queuedNext = $deleteIsStillActive
+                && $summary['attempted'] > 0
+                && $summary['attempted'] === count($rows)
+                && $this->hasMoreUnusedAssetRows($runId, $lastAssetId);
 
             if ($queuedNext) {
                 $jobId = $this->pushDeleteUnusedJob($runId, $batchSize, $hardDelete);
@@ -704,15 +716,31 @@ class Insights extends Component
     private function nextUnusedAssetRows(int $runId, int $lastAssetId, int $limit): array
     {
         return (new Query())
-            ->from(self::ASSET_TABLE)
+            ->from(['a' => self::ASSET_TABLE])
+            ->innerJoin(['e' => '{{%elements}}'], '[[e.id]] = [[a.assetId]]')
             ->where([
-                'runId' => $runId,
-                'relationCount' => 0,
+                'a.runId' => $runId,
+                'a.relationCount' => 0,
+                'e.dateDeleted' => null,
             ])
-            ->andWhere(['>', 'assetId', $lastAssetId])
-            ->orderBy(['assetId' => SORT_ASC])
+            ->andWhere(['>', 'a.assetId', $lastAssetId])
+            ->orderBy(['a.assetId' => SORT_ASC])
             ->limit($limit)
             ->all();
+    }
+
+    private function hasMoreUnusedAssetRows(int $runId, int $lastAssetId): bool
+    {
+        return (new Query())
+            ->from(['a' => self::ASSET_TABLE])
+            ->innerJoin(['e' => '{{%elements}}'], '[[e.id]] = [[a.assetId]]')
+            ->where([
+                'a.runId' => $runId,
+                'a.relationCount' => 0,
+                'e.dateDeleted' => null,
+            ])
+            ->andWhere(['>', 'a.assetId', $lastAssetId])
+            ->exists(Craft::$app->getDb());
     }
 
     private function storeAssetBatch(int $runId, array $assets, array $relationStats, array $conversionStats): array
@@ -873,6 +901,10 @@ class Insights extends Component
         $run['deleteFreedBytesFormatted'] = $this->formattedBytes((int)($run['deleteFreedBytes'] ?? 0));
         $run['isActive'] = in_array($run['status'] ?? null, [self::STATUS_QUEUED, self::STATUS_RUNNING], true);
         $run['deleteIsActive'] = $this->isDeleteActiveStatus($run['deleteStatus'] ?? null);
+        $run['deleteCanQueue'] = ($run['status'] ?? null) === self::STATUS_COMPLETED
+            && (int)($run['unusedAssets'] ?? 0) > 0
+            && !$run['deleteIsActive']
+            && ($run['deleteStatus'] ?? null) !== self::STATUS_COMPLETED;
 
         return $run;
     }

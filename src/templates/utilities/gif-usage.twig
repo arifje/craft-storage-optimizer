@@ -231,7 +231,7 @@
                 </form>
             {% endif %}
 
-            {% if latestRun.status == 'completed' and latestRun.unusedAssets > 0 and not latestRun.deleteIsActive %}
+            {% if latestRun.deleteCanQueue %}
                 {% set deleteGifConfirm = "Queue deletion of {count} unused GIF assets from this snapshot? Assets are re-checked before deletion and moved to Craft's trash."|t('storage-optimizer', { count: latestRun.unusedAssets }) %}
                 <form method="post" accept-charset="UTF-8" class="so-action-form" onsubmit="return confirm('{{ deleteGifConfirm|e('js') }}');">
                     {{ csrfInput() }}
