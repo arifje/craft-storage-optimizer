@@ -1,8 +1,8 @@
 # Craft Storage Optimizer
 
-Craft CMS plugin for optimizing asset storage with GIF-to-WebP/MP4 conversion, usage insights, and safe cleanup for ghost assets.
+Craft CMS plugin for optimizing asset storage with GIF-to-WebP conversion, usage insights, and safe cleanup for ghost assets.
 
-Source GIF assets remain available for conversion history and cleanup. The plugin can create WebP and MP4 sibling assets, can update Craft asset-field references to the generated WebP, exposes Twig helpers for MP4-first frontend rendering, and tracks conversion state in its own database table.
+Source GIF assets remain available for conversion history and cleanup. The plugin can create WebP sibling assets, can update Craft asset-field references to the generated WebP, exposes Twig helpers for GIF/WebP-aware frontend rendering, and tracks conversion state in its own database table.
 
 The Composer package is `arifje/craft-storage-optimizer` and the Craft plugin handle is `storage-optimizer`.
 
@@ -11,7 +11,6 @@ The Composer package is `arifje/craft-storage-optimizer` and the Craft plugin ha
 - Craft CMS `^4.4 || ^5.0`
 - PHP `>=8.0.2`
 - `gif2webp` available on the server path, or configured with an absolute binary path, when WebP generation is enabled
-- `ffmpeg` available on the server path, or configured with an absolute binary path, when MP4 generation is enabled
 
 ## Installation
 
@@ -24,17 +23,14 @@ php craft plugin/install storage-optimizer
 
 - **Convert GIFs on asset save**: enqueues a conversion whenever a GIF asset is saved.
 - **Generate WebP assets**: creates animated WebP sibling assets.
-- **Generate MP4 assets**: creates MP4 sibling assets with ffmpeg.
 - **Replace GIF references with WebP**: after a conversion completes, updates Craft asset-field relations, including Matrix-owned fields, so entries use the generated WebP asset while the original GIF remains in the volume.
 - **Queue delay**: defaults to `300` seconds so other plugins can process the original GIF first.
 - **gif2webp path**: defaults to `gif2webp`; environment variables are supported.
-- **ffmpeg path**: defaults to `ffmpeg`; environment variables are supported.
 - **Compression mode**: defaults to lossy WebP. Lossless animated WebP can be larger than an optimized GIF.
 - **Quality**, **method**, **minimize output size**, and **multithreading** options are passed to `gif2webp`.
 - **Skip WebP files that are not smaller**: enabled by default. If the generated WebP is the same size or larger than the source GIF, it is not saved and GIF references are not replaced. You can also require a minimum savings percentage.
-- **MP4 CRF**, **preset**, **faststart**, and **minimum savings** control ffmpeg output. MP4 generation is opt-in, and generated MP4 assets never replace image-field relations automatically.
 
-Asset-save conversion never runs inline. It only creates or updates a conversion state row and pushes a queue job. If reference replacement is enabled, relation updates happen inside that queue job after the WebP asset has been saved. The plugin also queues a short post-save repair for non-asset elements, so GIFs uploaded in unsaved entries or Matrix blocks can be swapped after Craft has written the field relations. MP4 assets are intended for frontend video rendering via Twig helpers and never replace image-field relations automatically.
+Asset-save conversion never runs inline. It only creates or updates a conversion state row and pushes a queue job. If reference replacement is enabled, relation updates happen inside that queue job after the WebP asset has been saved. The plugin also queues a short post-save repair for non-asset elements, so GIFs uploaded in unsaved entries or Matrix blocks can be swapped after Craft has written the field relations.
 
 ## Asset Optimizer
 
@@ -50,7 +46,7 @@ The scan records:
 - Matrix relation references
 - largest ghost assets by size
 
-Ghost assets are assets with no Craft relation references. Generated WebP and MP4 assets from this plugin are protected while their source GIF is still active, even if the generated asset has no direct Craft relations.
+Ghost assets are assets with no Craft relation references. Generated WebP assets from this plugin are protected while their source GIF is still active, even if the generated asset has no direct Craft relations.
 
 The utility can queue soft deletion for ghost assets from the latest completed snapshot. Each snapshot cleanup can be completed once; run a new scan before deleting newly discovered ghost assets. Each asset is re-checked against live relations and plugin protections immediately before deletion, so stale snapshot data will not delete assets that became used after the scan.
 
@@ -125,49 +121,36 @@ When **Replace GIF references with WebP** is enabled, `verify` also repairs exis
 
 ## Twig Helpers
 
-The plugin registers `craft.storageOptimizer` so frontend templates can reason about GIF-derived WebP/MP4 assets without relying on `image/gif` MIME checks. The legacy `craft.gifToWebp` variable remains available as an alias for existing templates.
+The plugin registers `craft.storageOptimizer` so frontend templates can reason about GIF-derived WebP assets without relying on `image/gif` MIME checks. The legacy `craft.gifToWebp` variable remains available as an alias for existing templates.
 
 ### Replace an `image/gif` Check
 
 If your frontend currently branches on `asset.mimeType == 'image/gif'`, replace that with:
 
 ```twig
-{% if craft.storageOptimizer.isGifOrConvertedMedia(asset) %}
-    {# Original GIF, or a generated WebP/MP4 from an original GIF. #}
+{% if craft.storageOptimizer.isGifOrConvertedWebp(asset) %}
+    {# Original GIF, or a generated WebP from an original GIF. #}
 {% endif %}
 ```
 
-This keeps existing GIF/MP4 fallback logic working after the image shown on the frontend becomes WebP or MP4.
+This keeps existing GIF fallback logic working after the image shown on the frontend becomes WebP.
 
-### Render MP4 First, WebP/Image Fallback
+### Use a Separate MP4 Plugin
+
+```twig
+{% set sourceGif = craft.storageOptimizer.sourceGifFor(asset) ?? asset %}
+
+{% if craft.storageOptimizer.isGifOrConvertedWebp(asset) %}
+    {# Pass sourceGif to your existing GIF-to-MP4 plugin/helper. #}
+{% endif %}
+```
+
+`sourceGifFor(asset)` returns the original GIF for a generated WebP, which lets a separate MP4 plugin keep using the original GIF asset as its lookup key.
 
 ```twig
 {% set image = craft.storageOptimizer.webpFor(asset) ?? asset %}
-{% set mp4 = craft.storageOptimizer.mp4For(asset) %}
 
-{% if mp4 %}
-    <video autoplay muted loop playsinline poster="{{ image.url }}">
-        <source src="{{ mp4.url }}" type="video/mp4">
-    </video>
-{% else %}
-    <img src="{{ image.url }}" alt="{{ image.alt }}">
-{% endif %}
-```
-
-`mp4For(asset)` returns the generated MP4 for the source GIF or generated WebP. `webpFor(asset)` is still useful as a poster image or image fallback.
-
-### Get the Preferred Generated Media
-
-```twig
-{% set media = craft.storageOptimizer.mediaFor(asset) %}
-
-{% if media and media.extension == 'mp4' %}
-    <video autoplay muted loop playsinline>
-        <source src="{{ media.url }}" type="video/mp4">
-    </video>
-{% elseif media %}
-    <img src="{{ media.url }}" alt="{{ media.alt }}">
-{% endif %}
+<img src="{{ image.url }}" alt="{{ image.alt }}">
 ```
 
 ### Detect Actual Animation
@@ -184,19 +167,16 @@ Use the animation helpers when you need to know whether the file itself contains
 {% endif %}
 ```
 
-Use `isGifOrConvertedMedia()` for GIF/WebP/MP4 fallback behavior. Use `isAnimatedImage()` when standalone animated WebP files should also be treated as animated media.
+Use `isGifOrConvertedWebp()` for GIF/WebP fallback behavior. Use `isAnimatedImage()` when standalone animated WebP files should also be treated as animated media.
 
 Available helpers:
 
 - `craft.storageOptimizer.webpFor(asset)` returns the converted WebP asset for a source GIF, or the same asset if it is already a WebP.
-- `craft.storageOptimizer.mp4For(asset)` returns the generated MP4 asset for a source GIF or GIF-derived asset, or the same asset if it is already a generated MP4.
-- `craft.storageOptimizer.mediaFor(asset)` returns MP4 first, then WebP, then the source GIF.
-- `craft.storageOptimizer.sourceGifFor(asset)` returns the original GIF for a converted WebP/MP4 asset, or the same asset if it is already a GIF.
-- `craft.storageOptimizer.isGifOrConvertedWebp(asset)` is the drop-in replacement for a frontend `image/gif` check when converted WebP assets should follow the same MP4/video fallback path.
-- `craft.storageOptimizer.isGifOrConvertedMedia(asset)` matches original GIF assets and generated WebP/MP4 assets.
+- `craft.storageOptimizer.sourceGifFor(asset)` returns the original GIF for a converted WebP asset, or the same asset if it is already a GIF.
+- `craft.storageOptimizer.isGifOrConvertedWebp(asset)` is the drop-in replacement for a frontend `image/gif` check when converted WebP assets should follow the same fallback path.
 - `craft.storageOptimizer.isAnimatedImage(asset)` inspects GIF/WebP file data and returns true only when the image actually has multiple frames.
 - `craft.storageOptimizer.isAnimatedGif(asset)` and `craft.storageOptimizer.isAnimatedWebp(asset)` expose the format-specific checks.
-- `craft.storageOptimizer.conversion(asset)` returns the plugin conversion row for a source GIF or generated WebP/MP4 asset.
+- `craft.storageOptimizer.conversion(asset)` returns the plugin conversion row for a source GIF or generated WebP asset.
 
 ## Conversion State
 

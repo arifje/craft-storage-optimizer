@@ -717,45 +717,26 @@ class AssetUsage extends Component
             return [];
         }
 
-        $select = [
-            'outputAssetId' => 'c.outputAssetId',
-        ];
-
-        if ($this->hasTableColumn(Conversions::TABLE, 'mp4AssetId')) {
-            $select['mp4AssetId'] = 'c.mp4AssetId';
-        }
-
         $query = (new Query())
-            ->select($select)
+            ->select(['outputAssetId' => 'c.outputAssetId'])
             ->from(['c' => Conversions::TABLE])
             ->innerJoin(['e' => '{{%elements}}'], '[[e.id]] = [[c.assetId]]')
+            ->where(['c.outputAssetId' => $assetIds])
             ->andWhere(['e.dateDeleted' => null]);
-
-        if ($this->hasTableColumn(Conversions::TABLE, 'mp4AssetId')) {
-            $query->where([
-                'or',
-                ['c.outputAssetId' => $assetIds],
-                ['c.mp4AssetId' => $assetIds],
-            ]);
-        } else {
-            $query->where(['c.outputAssetId' => $assetIds]);
-        }
 
         $rows = $query->all();
 
         $stats = [];
 
         foreach ($rows as $row) {
-            foreach (['outputAssetId', 'mp4AssetId'] as $column) {
-                if (empty($row[$column])) {
-                    continue;
-                }
-
-                $stats[(int)$row[$column]] = [
-                    'protected' => true,
-                    'reason' => 'storage-optimizer-output',
-                ];
+            if (empty($row['outputAssetId'])) {
+                continue;
             }
+
+            $stats[(int)$row['outputAssetId']] = [
+                'protected' => true,
+                'reason' => 'storage-optimizer-output',
+            ];
         }
 
         return $stats;

@@ -31,7 +31,7 @@ use yii\base\Event;
 class StorageOptimizer extends Plugin
 {
     public bool $hasCpSettings = true;
-    public string $schemaVersion = '1.3.0';
+    public string $schemaVersion = '1.4.0';
 
     public static ?self $plugin = null;
 

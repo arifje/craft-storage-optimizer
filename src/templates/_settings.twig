@@ -20,15 +20,6 @@
 }) }}
 
 {{ forms.lightswitchField({
-    label: "Generate MP4 assets"|t('storage-optimizer'),
-    instructions: "Creates MP4 sibling assets from source GIFs. Requires ffmpeg on the server."|t('storage-optimizer'),
-    id: 'convertToMp4',
-    name: 'convertToMp4',
-    on: settings.convertToMp4,
-    errors: settings.getErrors('convertToMp4')
-}) }}
-
-{{ forms.lightswitchField({
     label: "Replace GIF references with WebP"|t('storage-optimizer'),
     instructions: "When enabled, completed conversions update Craft asset-field relations, including Matrix-owned fields, so entries use the generated WebP asset. The original GIF asset remains available for conversion history and cleanup."|t('storage-optimizer'),
     id: 'replaceAssetReferences',
@@ -39,7 +30,7 @@
 
 {{ forms.textField({
     label: "Queue delay"|t('storage-optimizer'),
-    instructions: "Seconds to delay conversion jobs. Defaults to 300 so GIF-to-MP4 processing can run first."|t('storage-optimizer'),
+    instructions: "Seconds to delay conversion jobs. Defaults to 300 so other asset processing can run first."|t('storage-optimizer'),
     id: 'queueDelay',
     name: 'queueDelay',
     type: 'number',
@@ -56,16 +47,6 @@
     suggestEnvVars: true,
     value: settings.gif2webpPath,
     errors: settings.getErrors('gif2webpPath')
-}) }}
-
-{{ forms.autosuggestField({
-    label: "ffmpeg path"|t('storage-optimizer'),
-    instructions: "Binary path or environment variable used to create MP4 files from GIFs."|t('storage-optimizer'),
-    id: 'ffmpegPath',
-    name: 'ffmpegPath',
-    suggestEnvVars: true,
-    value: settings.ffmpegPath,
-    errors: settings.getErrors('ffmpegPath')
 }) }}
 
 {{ forms.selectField({
@@ -142,66 +123,4 @@
     max: 100,
     value: settings.minimumSavingsPercent,
     errors: settings.getErrors('minimumSavingsPercent')
-}) }}
-
-{{ forms.textField({
-    label: "MP4 CRF"|t('storage-optimizer'),
-    instructions: "ffmpeg H.264 quality from 0 to 51. Lower is higher quality and larger. 23 is a common default."|t('storage-optimizer'),
-    id: 'mp4Crf',
-    name: 'mp4Crf',
-    type: 'number',
-    min: 0,
-    max: 51,
-    value: settings.mp4Crf,
-    errors: settings.getErrors('mp4Crf')
-}) }}
-
-{{ forms.selectField({
-    label: "MP4 preset"|t('storage-optimizer'),
-    instructions: "ffmpeg encoding speed/compression preset. Slower presets may produce smaller files."|t('storage-optimizer'),
-    id: 'mp4Preset',
-    name: 'mp4Preset',
-    options: [
-        { label: "Ultrafast"|t('storage-optimizer'), value: 'ultrafast' },
-        { label: "Superfast"|t('storage-optimizer'), value: 'superfast' },
-        { label: "Veryfast"|t('storage-optimizer'), value: 'veryfast' },
-        { label: "Faster"|t('storage-optimizer'), value: 'faster' },
-        { label: "Fast"|t('storage-optimizer'), value: 'fast' },
-        { label: "Medium"|t('storage-optimizer'), value: 'medium' },
-        { label: "Slow"|t('storage-optimizer'), value: 'slow' },
-        { label: "Slower"|t('storage-optimizer'), value: 'slower' },
-        { label: "Veryslow"|t('storage-optimizer'), value: 'veryslow' },
-    ],
-    value: settings.mp4Preset,
-    errors: settings.getErrors('mp4Preset')
-}) }}
-
-{{ forms.lightswitchField({
-    label: "Optimize MP4 for streaming"|t('storage-optimizer'),
-    instructions: "Adds ffmpeg's +faststart movflag so MP4 files can begin playback before the full file is downloaded."|t('storage-optimizer'),
-    id: 'mp4FastStart',
-    name: 'mp4FastStart',
-    on: settings.mp4FastStart,
-    errors: settings.getErrors('mp4FastStart')
-}) }}
-
-{{ forms.lightswitchField({
-    label: "Skip MP4 files that are not smaller"|t('storage-optimizer'),
-    instructions: "When enabled, the generated MP4 is only saved if it is smaller than the source GIF."|t('storage-optimizer'),
-    id: 'skipLargerMp4',
-    name: 'skipLargerMp4',
-    on: settings.skipLargerMp4,
-    errors: settings.getErrors('skipLargerMp4')
-}) }}
-
-{{ forms.textField({
-    label: "Minimum MP4 savings"|t('storage-optimizer'),
-    instructions: "Optional required size reduction percentage before saving an MP4. Use 0 to only require the MP4 to be smaller."|t('storage-optimizer'),
-    id: 'minimumMp4SavingsPercent',
-    name: 'minimumMp4SavingsPercent',
-    type: 'number',
-    min: 0,
-    max: 100,
-    value: settings.minimumMp4SavingsPercent,
-    errors: settings.getErrors('minimumMp4SavingsPercent')
 }) }}

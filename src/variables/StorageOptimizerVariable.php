@@ -16,24 +16,6 @@ class StorageOptimizerVariable
         return StorageOptimizer::getInstance()->conversions->getWebpAsset($asset);
     }
 
-    public function mp4For(?Asset $asset): ?Asset
-    {
-        if (!$asset instanceof Asset) {
-            return null;
-        }
-
-        return StorageOptimizer::getInstance()->conversions->getMp4Asset($asset);
-    }
-
-    public function mediaFor(?Asset $asset): ?Asset
-    {
-        if (!$asset instanceof Asset) {
-            return null;
-        }
-
-        return StorageOptimizer::getInstance()->conversions->getPreferredMediaAsset($asset);
-    }
-
     public function sourceGifFor(?Asset $asset): ?Asset
     {
         if (!$asset instanceof Asset) {
@@ -50,15 +32,6 @@ class StorageOptimizerVariable
         }
 
         return StorageOptimizer::getInstance()->conversions->isGifOrConvertedWebp($asset);
-    }
-
-    public function isGifOrConvertedMedia(?Asset $asset): bool
-    {
-        if (!$asset instanceof Asset) {
-            return false;
-        }
-
-        return StorageOptimizer::getInstance()->conversions->isGifOrConvertedMedia($asset);
     }
 
     public function isAnimatedImage(?Asset $asset): bool

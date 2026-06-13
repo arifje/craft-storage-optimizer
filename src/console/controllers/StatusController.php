@@ -37,13 +37,11 @@ class StatusController extends BaseCommandController
 
         foreach ($summary['records'] as $row) {
             $this->stdout(sprintf(
-                '  #%s asset=%s webp=%s mp4=%s status=%s mp4Status=%s attempts=%s updated=%s%s',
+                '  #%s asset=%s webp=%s status=%s attempts=%s updated=%s%s',
                 $row['id'],
                 $row['assetId'],
                 $row['outputAssetId'] ?: '-',
-                ($row['mp4AssetId'] ?? null) ?: '-',
                 $row['status'],
-                ($row['mp4Status'] ?? null) ?: '-',
                 $row['attempts'],
                 $row['dateUpdated'],
                 PHP_EOL
@@ -51,10 +49,6 @@ class StatusController extends BaseCommandController
 
             if (!empty($row['lastError'])) {
                 $this->stdout(sprintf('    error: %s%s', $row['lastError'], PHP_EOL));
-            }
-
-            if (!empty($row['mp4LastError'])) {
-                $this->stdout(sprintf('    mp4 error: %s%s', $row['mp4LastError'], PHP_EOL));
             }
         }
 
